@@ -11,11 +11,19 @@ Requires POSIX Node.js 22.21+ or 24.10+, plus Claude Code and/or Codex CLI. POSI
 Codex usage and model discovery were verified with Codex CLI 0.160.1 and its app-server protocol. Older Codex clients that do not expose the required protocol fields safely keep their normal settings.
 
 ```sh
-npm install --global https://github.com/oleg-koval/surplus/releases/download/v0.1.0/surplus-cli-0.1.0.tgz
+npm install --global surplus-cli
 surplus install
 ```
 
-For a source install before the v0.1.0 release is published, use `npm install --global github:oleg-koval/surplus`.
+To install from source instead, build a package and install that. Do not use `npm install --global github:oleg-koval/surplus`: npm runs a git dependency's `prepare` step in global mode without dev dependencies, so the build fails with `tsup: command not found`.
+
+```sh
+git clone https://github.com/oleg-koval/surplus.git
+cd surplus
+npm ci
+npm install --global "./$(npm pack --silent | tail -n 1)"
+surplus install
+```
 
 Open a new terminal. Then use `claude` or `codex` as usual. Surplus installs small managed wrappers ahead of the original commands. It also chains Claude Code's existing command statusline so future usage readings are cached. Run `surplus uninstall` to restore the prior statusline and remove Surplus-owned shell entries and wrappers.
 

@@ -4,6 +4,24 @@
   "description": "Use more of your included AI coding allowance before it resets.",
   "type": "module",
   "license": "MIT",
+  "author": "Oleg Koval",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oleg-koval/surplus.git"
+  },
+  "homepage": "https://github.com/oleg-koval/surplus#readme",
+  "bugs": {
+    "url": "https://github.com/oleg-koval/surplus/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "codex",
+    "cli",
+    "ai",
+    "usage",
+    "rate-limit"
+  ],
   "engines": {
     "node": "^22.21.0 || >=24.10.0"
   },
@@ -15,6 +33,9 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
