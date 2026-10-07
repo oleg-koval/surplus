@@ -25,6 +25,7 @@ const isProvider = (value: string | undefined): value is Provider => value === '
 const configured = (config: Awaited<ReturnType<typeof readConfig>>, provider: Provider): ProviderConfig => config.providers[provider];
 const minutes = (value: number): string => `${String(value)}m`;
 const osSignalNumber = (signal: NodeJS.Signals): number | undefined => osConstants.signals[signal];
+const maxChainedStatusLineOutputBytes = 1024 * 1024;
 
 const showDecision = (decision: ReturnType<typeof decide>): void => {
   const remaining = decision.weeklyRemainingPercent === null ? 'unknown' : `${decision.weeklyRemainingPercent.toFixed(1)}%`;
@@ -46,9 +47,26 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
   try { command = Buffer.from(encoded, 'base64').toString('utf8'); } catch { return; }
   if (!command) return;
   const child = spawn('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
-  let output = '';
+  const terminateGroup = (): void => {
+    try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+  };
+  const outputChunks: Buffer[] = [];
+  let outputBytes = 0;
+  const outputState = { truncated: false };
   let receivedSignal: NodeJS.Signals | undefined;
-  child.stdout.setEncoding('utf8').on('data', (chunk: string) => { output += chunk; });
+  child.stdout.on('data', (chunk: Buffer) => {
+    if (outputState.truncated) return;
+    const remaining = maxChainedStatusLineOutputBytes - outputBytes;
+    const kept = chunk.subarray(0, Math.max(0, remaining));
+    if (kept.length > 0) {
+      outputChunks.push(kept);
+      outputBytes += kept.length;
+    }
+    if (chunk.length > remaining) {
+      outputState.truncated = true;
+      terminateGroup();
+    }
+  });
   child.stdin.on('error', () => { /* The original statusline may exit before consuming the input. */ });
   child.stdin.end(typeof input === 'object' ? JSON.stringify(input) : '');
   await new Promise<void>((resolve) => {
@@ -59,9 +77,6 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
       clearTimeout(timeout);
       for (const [signal, handler] of signalHandlers) process.off(signal, handler);
       resolve();
-    };
-    const terminateGroup = (): void => {
-      try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
     };
     const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
     const signalHandlers = new Map<NodeJS.Signals, () => void>(signals.map((signal) => [signal, () => {
@@ -78,7 +93,8 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
     child.once('error', finish);
     child.once('close', finish);
   });
-  process.stdout.write(output);
+  process.stdout.write(Buffer.concat(outputChunks, outputBytes).toString('utf8'));
+  if (outputState.truncated) process.stderr.write(`Surplus: chained Claude statusline output exceeded ${String(maxChainedStatusLineOutputBytes)} bytes and was truncated.\n`);
   if (receivedSignal) {
     const signalNumber = osSignalNumber(receivedSignal);
     if (signalNumber !== undefined) process.exitCode = 128 + signalNumber;

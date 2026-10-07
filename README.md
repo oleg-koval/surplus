@@ -6,7 +6,7 @@ Surplus watches the included usage windows exposed by Claude Code and Codex CLI.
 
 ## Install
 
-Requires POSIX Node.js 22.21+ or 24.10+, plus Claude Code and/or Codex CLI. Interactive wrappers use stable `process.execve` to preserve provider PID, foreground-terminal signals, and job control. Windows interactive routing is unsupported; shell installation supports zsh and bash.
+Requires POSIX Node.js 22.21+ or 24.10+, plus Claude Code and/or Codex CLI. POSIX wrappers use stable `process.execve` for provider launches, preserving the provider PID, terminal signals, and job control. Automatic model selection remains limited to fully interactive terminals. Windows integration is unsupported; shell installation supports zsh and bash.
 
 Codex usage and model discovery were verified with Codex CLI 0.160.1 and its app-server protocol. Older Codex clients that do not expose the required protocol fields safely keep their normal settings.
 

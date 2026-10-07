@@ -51,6 +51,7 @@ try {
   const settingsPath = join(home, '.claude', 'settings.json');
   const settings = JSON.parse(await readFile(settingsPath, 'utf8'));
   const statuslineCommand = settings.statusLine.command;
+  const captureCommand = statuslineCommand.split(' --original=')[0];
   const sample = JSON.stringify({ rate_limits: {
     five_hour: { used_percentage: 20, resets_at: Math.floor(Date.now() / 1000) + 4 * 60 * 60 },
     seven_day: { used_percentage: 60, resets_at: Math.floor(Date.now() / 1000) + 24 * 60 * 60 },
@@ -74,14 +75,23 @@ try {
 
   const slowCommand = Buffer.from('sleep 60').toString('base64');
   const timeoutStart = Date.now();
-  const timed = spawnSync('/bin/sh', ['-c', `${statuslineCommand} --original=${slowCommand}`], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash, SURPLUS_STATUSLINE_SAMPLE: sample }, input: sample, timeout: 6_000 });
+  const timed = spawnSync('/bin/sh', ['-c', `${captureCommand} --original=${slowCommand}`], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash, SURPLUS_STATUSLINE_SAMPLE: sample }, input: sample, timeout: 6_000 });
   assert.equal(timed.status, 0, `a stalled chained statusline should time out cleanly: ${timed.stderr}`);
   assert.ok(Date.now() - timeoutStart < 5_000, 'a stalled statusline subprocess must not hold Claude startup open');
 
   const earlyExitCommand = Buffer.from('exit 0').toString('base64');
   const largeInput = JSON.stringify({ payload: 'x'.repeat(2 * 1024 * 1024) });
-  const earlyExit = spawnSync('/bin/sh', ['-c', `${statuslineCommand} --original=${earlyExitCommand}`], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash }, input: largeInput, timeout: 6_000 });
+  const earlyExit = spawnSync('/bin/sh', ['-c', `${captureCommand} --original=${earlyExitCommand}`], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash }, input: largeInput, timeout: 6_000 });
   assert.equal(earlyExit.status, 0, `an original statusline that exits before reading input must not trigger EPIPE (${earlyExit.status}): ${earlyExit.stderr}`);
+
+  const continuousOutputCommand = Buffer.from('yes surplus-statusline-output').toString('base64');
+  const continuousOutput = spawnSync('/bin/sh', ['-c', `${captureCommand} --original=${continuousOutputCommand}`], {
+    encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash }, input: sample,
+    timeout: 6_000, maxBuffer: 2 * 1024 * 1024,
+  });
+  assert.equal(continuousOutput.status, 0, `a continuous statusline writer should be terminated cleanly: ${continuousOutput.stderr}`);
+  assert.equal(Buffer.byteLength(continuousOutput.stdout), 1024 * 1024, 'chained statusline output must be capped at 1 MiB');
+  assert.match(continuousOutput.stderr, /output exceeded 1048576 bytes and was truncated/);
 
   const readyPath = join(fixture, 'statusline-ready');
   const orphanPath = join(fixture, 'statusline-orphan');
@@ -108,7 +118,7 @@ try {
   const restoredSettings = JSON.parse(await readFile(join(home, '.claude', 'settings.json'), 'utf8'));
   assert.deepEqual(restoredSettings.statusLine, priorStatusLine, 'uninstall must restore the prior Claude statusline');
   run('python3', [join(root, 'scripts/pty-signal-smoke.py'), surplus, join(root, 'tests/fixtures/signal-provider.mjs'), join(root, 'tests/fixtures/fake-codex.mjs')], { cwd: root });
-  process.stdout.write('Packed install, first-run capture, statusline pipe/cancellation handling, noninteractive passthrough, bounded timeout, and PTY policy/signal behavior passed.\n');
+  process.stdout.write('Packed install, first-run capture, bounded statusline output, cancellation handling, noninteractive fallback, timeout, and POSIX PTY signal behavior passed.\n');
 } finally {
   await rm(fixture, { recursive: true, force: true });
 }

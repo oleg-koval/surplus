@@ -25,7 +25,7 @@ Use available included coding-assistant allowance before a weekly reset by selec
 ## Delivery gates
 
 - Unit tests cover reset boundaries, stale/missing inputs, available and absent short-window data, reserve and hysteresis behavior, telemetry parsing, override preservation, and install/uninstall ownership.
-- CI runs strict typecheck, lint, tests, and build on Node.js 22.21+ and 24.10+. Interactive launches use stable POSIX `process.execve` so provider and wrapper share the same PID and foreground process group.
+- CI runs strict typecheck, lint, tests, and build on Node.js 22.21+ and 24.10+. POSIX provider launches use stable `process.execve` so the provider keeps the original PID and foreground process group; automatic model selection remains limited to fully interactive terminals.
 - `npm pack` installs into a clean fixture and starts the bundled CLI.
 - Live protocol smoke reads Codex metadata only; no model turn is sent. The verified Codex CLI baseline is 0.160.1; older clients missing required fields safely retain their normal settings.
 - Launch materials distinguish actual release/download/star evidence from targets and hypotheses.

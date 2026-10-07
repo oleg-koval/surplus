@@ -9,9 +9,13 @@ import tempfile
 import time
 
 
-def start_pty(surplus: str, args: list[str], environment: dict[str, str]) -> tuple[int, int]:
+def start_pty(surplus: str, args: list[str], environment: dict[str, str], stdout_is_tty: bool = True) -> tuple[int, int]:
     pid, terminal = pty.fork()
     if pid == 0:
+        if not stdout_is_tty:
+            null_fd = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(null_fd, 1)
+            os.close(null_fd)
         os.execve(surplus, [surplus, *args], environment)
     return pid, terminal
 
@@ -32,7 +36,7 @@ def wait_pty(pid: int, terminal: int) -> int:
     raise RuntimeError(f"Surplus did not finish in the pseudo-terminal: {output.decode(errors='replace')}")
 
 
-def terminal_signal_once(surplus: str, provider: str, sig: int, targeted: bool) -> None:
+def terminal_signal_once(surplus: str, provider: str, sig: int, targeted: bool, stdout_is_tty: bool = True) -> None:
     with tempfile.TemporaryDirectory(prefix="surplus-signal-") as home:
         ready = os.path.join(home, "ready")
         count = os.path.join(home, "signals")
@@ -45,7 +49,7 @@ def terminal_signal_once(surplus: str, provider: str, sig: int, targeted: bool) 
             "SURPLUS_SIGNAL_READY": ready,
             "SURPLUS_SIGNAL_COUNT": count,
         })
-        pid, terminal = start_pty(surplus, ["run", "codex", "--model", "test-model"], environment)
+        pid, terminal = start_pty(surplus, ["run", "codex", "--model", "test-model"], environment, stdout_is_tty)
         try:
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline and not os.path.exists(ready):
@@ -121,11 +125,41 @@ def readonly_status_then_default_launch(surplus: str, provider: str) -> None:
             os.close(terminal)
 
 
+def corrupt_config_falls_back(surplus: str, provider: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="surplus-config-fallback-") as home:
+        config_dir = os.path.join(home, "config", "surplus")
+        os.makedirs(config_dir)
+        with open(os.path.join(config_dir, "config.json"), "w", encoding="utf-8") as config_file:
+            config_file.write("{broken")
+        provider_args = os.path.join(home, "provider-args.jsonl")
+        environment = os.environ.copy()
+        environment.update({
+            "HOME": home,
+            "XDG_CONFIG_HOME": os.path.join(home, "config"),
+            "XDG_STATE_HOME": os.path.join(home, "state"),
+            "SURPLUS_CODEX_BIN": provider,
+            "SURPLUS_TEST_PROVIDER_ARGS": provider_args,
+        })
+        pid, terminal = start_pty(surplus, ["run", "codex", "original-prompt"], environment)
+        try:
+            status = wait_pty(pid, terminal)
+            if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+                raise RuntimeError(f"a corrupt local config blocked the original provider: wait status {status}")
+            with open(provider_args, encoding="utf-8") as args_file:
+                args = [json.loads(line) for line in args_file if line.strip()]
+            if args != [["original-prompt"]]:
+                raise RuntimeError(f"corrupt config changed the original provider arguments: {args}")
+        finally:
+            os.close(terminal)
+
+
 def main() -> None:
     surplus, signal_provider, codex_provider = sys.argv[1:]
     readonly_status_then_default_launch(surplus, codex_provider)
+    corrupt_config_falls_back(surplus, codex_provider)
     terminal_signal_once(surplus, signal_provider, signal.SIGINT, targeted=False)
     terminal_signal_once(surplus, signal_provider, signal.SIGTERM, targeted=True)
+    terminal_signal_once(surplus, signal_provider, signal.SIGINT, targeted=False, stdout_is_tty=False)
     print("Interactive policy, Ctrl-C, and PID-targeted termination passed in pseudo-terminals.")
 
 

@@ -14,9 +14,9 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
   if (normalizedArgs.some((arg) => ['--model', '-m', '--effort', '--profile', '-p'].includes(arg) || /^-[mp].+/.test(arg))) return true;
   if (normalizedArgs.some((arg) => ['--json', '--output-format', '--version', '-v', '-V', '--help', '-h'].includes(arg))) return true;
   if (provider === 'claude') {
-    const utilities = new Set(['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm', 'auto-mode', 'gateway', 'daemon', 'desktop', 'import', 'project', 'respawn', 'ultrareview', 'teleport']);
+    const utilities = new Set(['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm', 'auto-mode', 'gateway', 'daemon', 'desktop', 'import', 'project', 'purge', 'remote-control', 'respawn', 'self-hosted-runner', 'ultrareview', 'teleport']);
     return cliArgs.some((arg) => utilities.has(arg))
-      || normalizedArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--environment', '--exec', '--desktop', '--bare', '--debug', '-d', '--verbose', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings'].includes(arg) || /^-r.+/.test(arg));
+      || normalizedArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--environment', '--exec', '--desktop', '--bare', '--debug', '-d', '--verbose', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings', '--init-only', '--from-pr', '--teleport', '--fallback-model', '--advisor'].includes(arg) || /^-r.+/.test(arg));
   }
   if (normalizedArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg))) return true;
   if (normalizedArgs.some((arg) => ['--config', '-c', '--worktree', '-C', '--cd'].includes(arg) || /^-[cC].+/.test(arg))) return true;
@@ -36,7 +36,7 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
   return utilityCommands.has(command ?? '');
 };
 
-export const shouldAutomaticallyRoute = (stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined): boolean => stdinIsTTY === true && stdoutIsTTY === true;
+export const shouldAutomaticallyRoute = (stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined, platform = process.platform): boolean => platform !== 'win32' && stdinIsTTY === true && stdoutIsTTY === true;
 
 const findExecutable = async (name: string, env: NodeJS.ProcessEnv): Promise<string | undefined> => {
   const explicit = env[`SURPLUS_${name.toUpperCase()}_BIN`];
@@ -53,10 +53,8 @@ const findExecutable = async (name: string, env: NodeJS.ProcessEnv): Promise<str
 export const launchProvider = async (provider: Provider, args: readonly string[], env = process.env, onStarted?: () => Promise<void>): Promise<number> => {
   const executable = await findExecutable(provider, env);
   if (!executable) throw new Error(`Could not find the original ${provider} executable in PATH.`);
-  if (process.stdin.isTTY && process.stdout.isTTY) {
-    if (process.platform === 'win32' || !process.execve) {
-      throw new Error('Interactive launches require POSIX Node.js with process.execve (Node.js 22.21+ or 24.10+).');
-    }
+  if (process.platform !== 'win32') {
+    if (!process.execve) throw new Error('Provider launches require POSIX Node.js with stable process.execve (Node.js 22.21+ or 24.10+).');
     if (onStarted) await onStarted();
     const executableEnv = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
     process.execve(executable, [executable, ...args], executableEnv);
