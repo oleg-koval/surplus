@@ -1,0 +1,63 @@
+import { describe, expect, it } from 'vitest';
+import { parseClaudeStatusLine } from '../src/providers/claude.js';
+import { codexWindows, selectEffectiveCodexModel } from '../src/providers/codex.js';
+import { codexUpgradeConfig } from '../src/core/codex-policy.js';
+import { defaultConfig } from '../src/core/files.js';
+
+const now = new Date('2026-10-07T12:00:00.000Z');
+
+describe('Claude statusline telemetry', () => {
+  it('parses independent five-hour and seven-day windows with epoch reset times', () => {
+    const snapshot = parseClaudeStatusLine({ rate_limits: {
+      five_hour: { used_percentage: 10, resets_at: now.getTime() / 1000 + 3600 },
+      seven_day: { used_percentage: 65, resets_at: now.getTime() / 1000 + 86400 },
+    } }, now);
+    expect(snapshot?.weeklyUsedPercent).toBe(65);
+    expect(snapshot?.sessionUsedPercent).toBe(10);
+    expect(snapshot?.resetsAt).toBe('2026-10-08T12:00:00.000Z');
+  });
+
+  it('rejects missing or out-of-range provider values', () => {
+    expect(parseClaudeStatusLine({ rate_limits: { seven_day: { used_percentage: 20, resets_at: 1 } } }, now)).toBeUndefined();
+    expect(parseClaudeStatusLine({ rate_limits: { five_hour: { used_percentage: 120, resets_at: 1 }, seven_day: { used_percentage: 20, resets_at: 1 } } }, now)).toBeUndefined();
+  });
+});
+
+describe('Codex window selection', () => {
+  it('classifies weekly and short windows by their durations, independent of primary/secondary order', () => {
+    const windows = codexWindows({ primary: { usedPercent: 12, windowDurationMins: 10080 }, secondary: { usedPercent: 40, windowDurationMins: 300 } });
+    expect(windows.weekly?.usedPercent).toBe(12);
+    expect(windows.session?.usedPercent).toBe(40);
+  });
+
+  it('does not guess when a provider window lacks duration metadata', () => {
+    expect(codexWindows({ primary: { usedPercent: 12 }, secondary: { usedPercent: 40 } })).toEqual({});
+  });
+
+  it('uses the catalog default only when Codex config has no explicit model', () => {
+    const models = [{ model: 'catalog-default', isDefault: true }, { model: 'other', isDefault: false }];
+    expect(selectEffectiveCodexModel(null, models)?.model).toBe('catalog-default');
+    expect(selectEffectiveCodexModel('other', models)?.model).toBe('other');
+    expect(selectEffectiveCodexModel('unknown', models)).toBeUndefined();
+  });
+});
+
+describe('Codex effort upgrade guard', () => {
+  const config = defaultConfig.providers.codex;
+  const discovery = {
+    usage: { provider: 'codex' as const, observedAt: now.toISOString(), weeklyUsedPercent: 20, resetsAt: new Date(now.getTime() + 60_000).toISOString(), sessionUsedPercent: 10, sessionResetsAt: new Date(now.getTime() + 60_000).toISOString(), usageAllowed: true },
+    effectiveModel: 'gpt-default', effectiveEffort: 'low', supportedEfforts: ['low', 'high'],
+    models: [{ model: 'gpt-default', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }],
+  };
+
+  it('only raises reasoning for the effective model when the catalog confirms it', () => {
+    expect(codexUpgradeConfig(config, discovery).premiumEffort).toBe('high');
+    expect(codexUpgradeConfig(config, { ...discovery, effectiveEffort: 'xhigh' }).minWeeklyRemainingPercent).toBe(101);
+    expect(codexUpgradeConfig(config, { ...discovery, effectiveModel: undefined }).minWeeklyRemainingPercent).toBe(101);
+  });
+
+  it('permits an explicitly configured premium model when its requested effort is supported', () => {
+    const explicit = { ...config, premiumModel: 'gpt-default' };
+    expect(codexUpgradeConfig(explicit, { ...discovery, effectiveEffort: 'xhigh' }).premiumModel).toBe('gpt-default');
+  });
+});

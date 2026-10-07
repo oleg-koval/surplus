@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f0e7">
+  <meta name="description" content="Surplus routes Claude Code and Codex CLI to your chosen stronger model when included weekly usage is available before reset.">
+  <title>Surplus — spend the allowance you already have</title>
+  <style>
+    :root { color-scheme: light; --ink:#172720; --muted:#59685f; --paper:#f3f0e7; --card:#fffdf7; --green:#a5ed75; --line:#d9dfd5; --orange:#d65b32; --mono:ui-monospace,SFMono-Regular,Menlo,monospace; --sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--sans); }
+    a { color:inherit; }
+    .wrap { width:min(1120px,calc(100% - 40px)); margin:0 auto; }
+    header { display:flex; align-items:center; justify-content:space-between; padding:25px 0; border-bottom:1px solid var(--line); }
+    .brand { display:flex; gap:11px; align-items:center; font-weight:760; letter-spacing:-.04em; font-size:20px; }
+    .mark { display:grid; place-items:center; width:34px; height:34px; border-radius:11px; background:var(--green); font:800 16px var(--mono); }
+    nav { display:flex; gap:23px; color:var(--muted); font-size:14px; }
+    nav a { text-decoration:none; }
+    .hero { display:grid; grid-template-columns:1.06fr .94fr; gap:68px; align-items:center; padding:84px 0 76px; }
+    .eyebrow { font:700 12px var(--mono); letter-spacing:.12em; text-transform:uppercase; color:#526856; }
+    h1 { max-width:640px; margin:16px 0 18px; font-size:clamp(44px,6vw,74px); line-height:.99; letter-spacing:-.065em; }
+    .sub { max-width:520px; color:var(--muted); font-size:18px; line-height:1.58; }
+    .actions { display:flex; gap:12px; flex-wrap:wrap; margin:28px 0 16px; }
+    .button { display:inline-flex; align-items:center; justify-content:center; min-height:48px; padding:0 18px; background:var(--ink); color:white; text-decoration:none; border-radius:9px; font-size:14px; font-weight:680; }
+    .button.secondary { color:var(--ink); background:transparent; border:1px solid #aeb8ad; }
+    .requires { color:var(--muted); font:12px var(--mono); }
+    .terminal { overflow:hidden; border-radius:16px; background:#172720; color:#eff7e8; box-shadow:0 24px 75px #17272028; transform:rotate(1deg); }
+    .terminal-top { display:flex; align-items:center; gap:7px; padding:15px 17px; border-bottom:1px solid #ffffff20; color:#a7b6a9; font:12px var(--mono); }
+    .dot { width:8px; height:8px; border-radius:50%; background:#e78569; } .dot:nth-child(2){background:#e4bf66}.dot:nth-child(3){background:#a5ed75}
+    .terminal-body { padding:25px; font:13px/1.9 var(--mono); }
+    .dim { color:#97aa9a; }.lime { color:var(--green); }.prompt { color:#f2d78c; }
+    .bar { height:9px; overflow:hidden; border-radius:20px; background:#39463f; margin:2px 0 7px; }.bar i { display:block; height:100%; width:38%; border-radius:inherit; background:var(--green); }
+    .callout { display:inline-flex; margin-top:15px; padding:8px 10px; border:1px solid #a5ed7560; border-radius:6px; color:var(--green); }
+    .proof { border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:20px 0; display:flex; justify-content:space-between; gap:20px; color:var(--muted); font:12px var(--mono); }
+    .section { padding:72px 0; }
+    .section h2 { margin:0 0 11px; font-size:38px; letter-spacing:-.05em; }
+    .intro { max-width:650px; color:var(--muted); line-height:1.55; }
+    .demo-grid { display:grid; grid-template-columns:1fr .86fr; gap:20px; margin-top:26px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:25px; }
+    .control { margin:0 0 24px; }
+    .control-head { display:flex; justify-content:space-between; gap:20px; align-items:baseline; margin-bottom:10px; font-size:14px; }
+    .control output { font:700 13px var(--mono); }
+    input[type=range] { width:100%; accent-color:#457e39; }
+    .note { margin:5px 0 0; color:var(--muted); font-size:12px; }
+    .result { min-height:230px; background:var(--ink); color:white; }
+    .result-label { color:#aab9aa; font:11px var(--mono); letter-spacing:.08em; text-transform:uppercase; }
+    .result h3 { margin:18px 0 10px; font-size:28px; letter-spacing:-.04em; }
+    .result p { color:#c2cec2; line-height:1.55; }
+    .status { display:inline-flex; margin-top:10px; padding:7px 10px; border-radius:99px; color:var(--ink); background:var(--green); font:700 11px var(--mono); }
+    .status.off { background:#39483f; color:#d6dfd5; }
+    .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:28px; }
+    .small-card { padding:19px; background:#e9e8dc; border-radius:12px; }
+    .small-card b { display:block; margin-bottom:8px; }
+    .small-card p { margin:0; color:var(--muted); font-size:14px; line-height:1.5; }
+    .install { padding:32px; background:var(--green); border-radius:16px; display:flex; align-items:center; justify-content:space-between; gap:25px; }
+    .install h2 { max-width:500px; font-size:32px; }
+    pre { padding:14px 16px; overflow:auto; background:#172720; color:#eaf3e5; border-radius:8px; font:12px/1.7 var(--mono); }
+    footer { padding:28px 0 38px; color:var(--muted); display:flex; justify-content:space-between; gap:20px; font-size:13px; }
+    @media(max-width:760px){.hero,.demo-grid{grid-template-columns:1fr;gap:35px}.hero{padding:55px 0}.terminal{transform:none}.proof{flex-direction:column}.grid3{grid-template-columns:1fr}.install{align-items:flex-start;flex-direction:column}nav{gap:12px}.section{padding:50px 0}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="#top" aria-label="Surplus home"><span class="mark">S+</span>surplus</a>
+      <nav aria-label="Main navigation"><a href="#how">How it works</a><a href="#demo">Try the demo</a><a href="https://github.com/oleg-koval/surplus">GitHub ↗</a></nav>
+    </header>
+    <main id="top">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">For Claude Code and Codex CLI</div>
+          <h1>A stronger coding session, before reset.</h1>
+          <p class="sub">Surplus starts your next session with your chosen premium model or reasoning setting when included weekly usage has room.</p>
+          <div class="actions"><a class="button" href="https://github.com/oleg-koval/surplus#install">Install from GitHub</a><a class="button secondary" href="https://github.com/oleg-koval/surplus">Star on GitHub</a></div>
+          <div class="requires">Open source · MIT · Node.js 20.10+</div>
+        </div>
+        <div class="terminal" aria-label="Illustrative Surplus status output">
+          <div class="terminal-top"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span style="margin-left:8px">surplus · sample values</span></div>
+          <div class="terminal-body"><div><span class="prompt">$</span> surplus status claude</div><div class="dim">weekly window · 7 days</div><div class="bar"><i></i></div><div><span class="lime">40% remaining</span> <span class="dim">· resets in 24h</span></div><div class="dim" style="margin-top:13px">5-hour window</div><div><span class="lime">80% remaining</span></div><div class="callout">PREMIUM WINDOW · opus</div></div>
+        </div>
+      </section>
+      <div class="proof"><span>READS PROVIDER USAGE LOCALLY</span><span>NO MODEL CALL TO MEASURE</span><span>NO TELEMETRY BY DEFAULT</span><span>YOU CONTROL THE PREMIUM MODEL</span></div>
+
+      <section class="section" id="how">
+        <div class="eyebrow">A small local decision</div><h2>Use it before the counter resets.</h2>
+        <p class="intro">Surplus checks the provider's weekly allowance, five-hour headroom, reset time, and included-usage status whenever you start a new interactive session. It passes your normal model choice through when the data is missing or the reserve is too small.</p>
+        <div class="grid3">
+          <article class="small-card"><b>Choose the upgrade</b><p>Claude defaults to the `opus` alias. Codex keeps your configured model and can raise reasoning effort when that exact model supports it.</p></article>
+          <article class="small-card"><b>Keep your choices</b><p>Explicit model flags, profiles, resumed sessions, scripts, and cloud or background runs keep their original behavior.</p></article>
+          <article class="small-card"><b>Stay local</b><p>Usage and a local launch counter stay on your device. No billing settings are changed and no usage telemetry is sent.</p></article>
+        </div>
+      </section>
+
+      <section class="section" id="demo">
+        <div class="eyebrow">Interactive policy explainer</div><h2>Would Surplus upgrade this session?</h2>
+        <p class="intro">Move the sliders to see the default rule. The controls use sample values and never contact a provider.</p>
+        <div class="demo-grid">
+          <div class="card">
+            <label class="control"><span class="control-head"><span>Weekly allowance remaining</span><output id="weeklyOut">40%</output></span><input id="weekly" type="range" min="0" max="100" value="40"><span class="note">Needs at least 25% remaining and enough to cover a 5% reserve plus 5% expected use.</span></label>
+            <label class="control"><span class="control-head"><span>Five-hour allowance remaining</span><output id="sessionOut">80%</output></span><input id="session" type="range" min="0" max="100" value="80"><span class="note">Needs at least 25% headroom in this shorter provider window.</span></label>
+            <label class="control"><span class="control-head"><span>Hours until weekly reset</span><output id="hoursOut">24h</output></span><input id="hours" type="range" min="0" max="168" value="24"><span class="note">Premium windows open only during the final 48 hours.</span></label>
+            <label class="control"><span class="control-head"><span>Provider confirms included usage</span><output id="allowedOut">Yes</output></span><input id="allowed" type="checkbox" checked></label>
+            <label class="control"><span class="control-head"><span>Telemetry is fresh</span><output id="freshOut">Yes</output></span><input id="fresh" type="checkbox" checked></label>
+          </div>
+          <div class="card result" aria-live="polite"><div class="result-label">Sample policy result</div><h3 id="resultTitle">Premium window</h3><p id="resultText">Weekly and five-hour headroom are available close to reset. Your configured premium choice applies at the next new session.</p><span class="status" id="resultPill">UPGRADE ELIGIBLE</span><p class="note" style="margin-top:22px">These are illustrative inputs. Your provider's actual plan limits and billing controls remain provider-owned.</p></div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="install"><div><div class="eyebrow">One-time install</div><h2>Keep launching Claude or Codex as usual.</h2></div><div><pre>npm install --global github:oleg-koval/surplus
+surplus install</pre><a class="button" href="https://github.com/oleg-koval/surplus#install">Read the install guide ↗</a></div></div>
+      </section>
+    </main>
+    <footer><span>Surplus · MIT licensed</span><span><a href="https://github.com/oleg-koval/surplus">Source and issues</a> · No guarantee of model-specific quota or paid-overage prevention.</span></footer>
+  </div>
+  <script>
+    const weekly = document.querySelector('#weekly');
+    const session = document.querySelector('#session');
+    const hours = document.querySelector('#hours');
+    const allowed = document.querySelector('#allowed');
+    const fresh = document.querySelector('#fresh');
+    const update = () => {
+      const w = Number(weekly.value), s = Number(session.value), h = Number(hours.value);
+      document.querySelector('#weeklyOut').value = `${w}%`;
+      document.querySelector('#sessionOut').value = `${s}%`;
+      document.querySelector('#hoursOut').value = `${h}h`;
+      document.querySelector('#allowedOut').value = allowed.checked ? 'Yes' : 'No';
+      document.querySelector('#freshOut').value = fresh.checked ? 'Yes' : 'No';
+      const eligible = fresh.checked && allowed.checked && w >= 25 && w >= 10 && s >= 25 && h > 0 && h <= 48;
+      const title = document.querySelector('#resultTitle');
+      const text = document.querySelector('#resultText');
+      const pill = document.querySelector('#resultPill');
+      if (eligible) {
+        title.textContent = 'Premium window';
+        text.textContent = 'Weekly and five-hour headroom are available close to reset. Your configured premium choice applies at the next new session.';
+        pill.textContent = 'UPGRADE ELIGIBLE'; pill.classList.remove('off');
+      } else {
+        title.textContent = 'Use provider default';
+        const reason = !fresh.checked ? 'Telemetry is stale.' : !allowed.checked ? 'The provider did not confirm included usage.' : h === 0 ? 'The reset has passed.' : w < 25 ? 'Weekly headroom is below the threshold.' : s < 25 ? 'Five-hour headroom is below the threshold.' : 'The reset is more than 48 hours away.';
+        text.textContent = `${reason} Surplus leaves the model choice unchanged.`;
+        pill.textContent = 'NO UPGRADE'; pill.classList.add('off');
+      }
+    };
+    [weekly, session, hours, allowed, fresh].forEach((control) => control.addEventListener('input', update));
+    update();
+  </script>
+</body>
+</html>
