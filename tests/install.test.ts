@@ -100,17 +100,52 @@ describe('reversible install', () => {
     });
   });
 
-  it('recovers ownership of a pre-existing Surplus statusline without a backup record', async () => {
+  it('records metadata without claiming capture ownership for an orphaned statusline', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      const backupPath = join(home, 'state/surplus/claude-statusline-backup.json');
+      const codexWrapper = join(home, 'state/surplus/bin/codex');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, 'state/surplus/bin'), { recursive: true }));
+      await writeFile(settings, JSON.stringify({ statusLine: { type: 'command', command: statuslineCommand() } }));
+      await writeFile(codexWrapper, 'preexisting user wrapper');
+
+      await expect(main(['install'])).rejects.toThrow(/Refusing to overwrite/);
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: { type: 'command', command: statuslineCommand() } });
+      expect(JSON.parse(await readFile(backupPath, 'utf8'))).toEqual({ present: false, managedCommand: statuslineCommand() });
+      await uninstallClaudeStatusLine();
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({});
+    });
+  });
+
+  it('recovers the original command from a chained orphaned statusline', async () => {
     await withHome(async (home) => {
       const settings = join(home, '.claude', 'settings.json');
       const backupPath = join(home, 'state/surplus/claude-statusline-backup.json');
       await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
-      await writeFile(settings, JSON.stringify({ statusLine: { type: 'command', command: statuslineCommand() } }));
+      const original = 'printf original-status';
+      await writeFile(settings, JSON.stringify({ statusLine: { type: 'command', command: statuslineCommand(original), padding: 8 } }));
 
-      expect(await installClaudeStatusLine()).toBe(true);
-      expect(JSON.parse(await readFile(backupPath, 'utf8'))).toEqual({ present: false, managedCommand: statuslineCommand() });
+      expect(await installClaudeStatusLine()).toBe(false);
+      expect(JSON.parse(await readFile(backupPath, 'utf8'))).toEqual({
+        present: true,
+        value: { type: 'command', command: original },
+        managedCommand: statuslineCommand(original),
+      });
       await uninstallClaudeStatusLine();
-      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({});
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: { type: 'command', command: original, padding: 8 } });
+    });
+  });
+
+  it('refuses to nest an orphaned capture from a different Surplus installation', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      const oldCommand = "'/old/node' '/old/cli.js' capture claude --original=b2xk";
+      await writeFile(settings, JSON.stringify({ statusLine: { type: 'command', command: oldCommand } }));
+
+      await expect(installClaudeStatusLine()).rejects.toThrow(/another installation has no ownership backup/);
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: { type: 'command', command: oldCommand } });
     });
   });
 

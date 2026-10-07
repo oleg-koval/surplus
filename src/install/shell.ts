@@ -112,6 +112,21 @@ export const statuslineCommand = (originalCommand?: string): string => {
   return originalCommand ? `${cli} --original=${Buffer.from(originalCommand).toString('base64')}` : cli;
 };
 
+const recoverOriginalStatuslineCommand = (command: string): { readonly recognized: boolean; readonly originalCommand?: string } => {
+  const bareCommand = statuslineCommand();
+  if (command === bareCommand) return { recognized: true };
+  const prefix = `${bareCommand} --original=`;
+  if (!command.startsWith(prefix)) return { recognized: false };
+  const encoded = command.slice(prefix.length);
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return { recognized: false };
+  const bytes = Buffer.from(encoded, 'base64');
+  const decoded = bytes.toString('utf8');
+  if (!decoded || bytes.toString('base64') !== encoded || Buffer.from(decoded, 'utf8').toString('base64') !== encoded) {
+    return { recognized: false };
+  }
+  return { recognized: true, originalCommand: decoded };
+};
+
 export const installClaudeStatusLine = async (): Promise<boolean> => {
   const settingsPath = claudeSettingsPath();
   let settings: Record<string, unknown> = {};
@@ -150,18 +165,24 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
     }
   }
   const alreadyOwned = previous !== undefined && existingCommand === previous.managedCommand;
+  const orphanedCommand = !alreadyOwned && existingCommand ? recoverOriginalStatuslineCommand(existingCommand) : undefined;
+  if (!alreadyOwned && existingCommand?.includes(' capture claude') && !orphanedCommand?.recognized) {
+    throw new Error('A Surplus Claude statusline from another installation has no ownership backup; restore that backup or remove the old capture command before reinstalling.');
+  }
   const originalCommand = alreadyOwned && previous
     ? (typeof previous.value === 'object' && previous.value !== null && !Array.isArray(previous.value)
       && typeof (previous.value as Record<string, unknown>).command === 'string'
       ? (previous.value as Record<string, string>).command : undefined)
-    : existingCommand;
+    : orphanedCommand?.recognized ? orphanedCommand.originalCommand : existingCommand;
   const managedCommand = statuslineCommand(originalCommand);
   const currentObject = current as Record<string, unknown> | undefined;
   if (alreadyOwned && existingCommand === managedCommand) return false;
-  if (!alreadyOwned && currentObject?.command === statuslineCommand()) {
-    const recoveredOwnership = `${JSON.stringify({ present: false, managedCommand: existingCommand }, null, 2)}\n`;
+  if (!alreadyOwned && orphanedCommand?.recognized && currentObject?.command === managedCommand) {
+    const originalValue = orphanedCommand.originalCommand === undefined
+      ? undefined : { type: 'command', command: orphanedCommand.originalCommand };
+    const recoveredOwnership = `${JSON.stringify({ present: originalValue !== undefined, ...(originalValue ? { value: originalValue } : {}), managedCommand: existingCommand }, null, 2)}\n`;
     await writeAtomic(path, recoveredOwnership, 0o600);
-    return true;
+    return false;
   }
   const backup = alreadyOwned && previous
     ? { present: previous.present, value: previous.value, managedCommand }
