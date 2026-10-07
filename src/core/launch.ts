@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -20,7 +20,7 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
   }
   if (normalizedArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg))) return true;
   if (normalizedArgs.some((arg) => ['--config', '-c', '--worktree', '-C', '--cd'].includes(arg) || /^-[cC].+/.test(arg))) return true;
-  const utilityCommands = new Set(['agents', 'exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'app-server', 'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'queue', 'archive', 'delete', 'unarchive', 'migrate-rollouts', 'cloud', 'cloud-tasks', 'exec-server', 'features', 'help', 'resume', 'fork']);
+  const utilityCommands = new Set(['agents', 'exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'app-server', 'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'queue', 'archive', 'delete', 'unarchive', 'migrate-rollouts', 'cloud', 'cloud-tasks', 'exec-server', 'features', 'help', 'resume', 'fork', 'tcp-tunnel', 'execpolicy', 'responses-api-proxy', 'stdio-to-uds']);
   const valueOptions = new Set(['-c', '--config', '--enable', '--disable', '--remote', '--remote-auth-token-env', '-i', '--image', '-m', '--model', '-p', '--profile', '-s', '--sandbox', '-a', '--ask-for-approval', '-C', '--cd', '--add-dir']);
   let command: string | undefined;
   for (let index = 0; index < cliArgs.length; index += 1) {
@@ -45,7 +45,11 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
   for (const directory of (env.PATH ?? '').split(delimiter)) {
     if (!directory || directory === wrapperDir) continue;
     const path = join(directory, name);
-    try { await access(path, constants.X_OK); return path; } catch { /* Search the next PATH directory. */ }
+    try {
+      if (!(await stat(path)).isFile()) continue;
+      await access(path, constants.X_OK);
+      return path;
+    } catch { /* Search the next PATH directory. */ }
   }
   return undefined;
 };

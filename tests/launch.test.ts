@@ -26,6 +26,24 @@ describe('provider executable lookup', () => {
       await rm(fixture, { recursive: true, force: true });
     }
   });
+
+  it('skips a directory named like the provider and finds the executable later in PATH', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-launch-path-'));
+    try {
+      const directoryBin = join(fixture, 'directory-bin');
+      const providerBin = join(fixture, 'provider-bin');
+      await Promise.all([mkdir(join(directoryBin, 'codex'), { recursive: true }), mkdir(providerBin)]);
+      const realProvider = join(providerBin, 'codex');
+      await writeFile(realProvider, '#!/bin/sh\nexit 0\n');
+      await chmod(realProvider, 0o755);
+
+      const found = await findExecutable('codex', { PATH: [directoryBin, providerBin].join(':') }, fixture);
+
+      expect(found).toBe(realProvider);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('launch argument preservation', () => {
@@ -38,6 +56,9 @@ describe('launch argument preservation', () => {
     }
     for (const args of [['--sandbox', 'read-only', 'exec', 'prompt'], ['-s', 'read-only', 'e', 'prompt'], ['apply'], ['--oss'], ['--local-provider', 'ollama'], ['--remote', 'wss://example.test']]) {
       expect(hasExplicitOverride('codex', args)).toBe(true);
+    }
+    for (const utility of ['tcp-tunnel', 'execpolicy', 'responses-api-proxy', 'stdio-to-uds']) {
+      expect(hasExplicitOverride('codex', [utility])).toBe(true);
     }
     expect(hasExplicitOverride('claude', ['--', '--model', 'literal prompt'])).toBe(false);
     expect(hasExplicitOverride('claude', ['--', '--profile=literal prompt'])).toBe(false);
