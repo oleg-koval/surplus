@@ -364,6 +364,24 @@ describe('reversible install', () => {
     });
   });
 
+  it('preserves a damaged startup block while cleaning other startup files and wrappers', async () => {
+    await withHome(async (home) => {
+      process.env.SHELL = '/bin/bash';
+      await installShell();
+      const bashrc = join(home, '.bashrc');
+      const damaged = (await readFile(bashrc, 'utf8')).replace('# <<< surplus managed block <<<', '');
+      await writeFile(bashrc, damaged);
+
+      await expect(uninstallShell()).rejects.toThrow();
+
+      expect(await readFile(bashrc, 'utf8')).toBe(damaged);
+      expect(await readFile(join(home, '.bash_profile'), 'utf8')).toBe('');
+      for (const provider of ['claude', 'codex']) {
+        await expect(readFile(join(home, 'state/surplus/bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+  });
+
   it('chains and restores a preexisting Claude command statusline only while Surplus still owns it', async () => {
     await withHome(async (home) => {
       const settings = join(home, '.claude', 'settings.json');
