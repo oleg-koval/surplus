@@ -83,6 +83,17 @@ describe('launch argument preservation', () => {
     expect(hasExplicitOverride('claude', ['--dangerously-skip-permissions', '--append-system-prompt', 'instructions', 'daemon'])).toBe(false);
   });
 
+  it('treats repeatable plugin options as one path per flag', () => {
+    expect(hasExplicitOverride('claude', ['--plugin-dir', 'path', 'doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--plugin-dir=path', 'doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--plugin-dir', 'first', '--plugin-dir', 'second', 'doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--plugin-dir', 'doctor'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--plugin-url', 'https://example.test/plugin.zip', 'doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--plugin-url=https://example.test/plugin.zip', 'doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--plugin-url', 'first', '--plugin-url', 'second', 'doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--plugin-url', 'doctor'])).toBe(false);
+  });
+
   it('adds model and effort flags only when requested', () => {
     expect(appendModel('claude', 'opus', ['folder'])).toEqual(['--model', 'opus', 'folder']);
     expect(appendEffort('codex', 'high', ['task'])).toEqual(['-c', 'model_reasoning_effort="high"', 'task']);

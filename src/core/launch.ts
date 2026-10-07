@@ -17,7 +17,7 @@ const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
   const optionalValueOptions = new Set(['--debug', '--from-pr', '--cloud', '--prompt-suggestions', '--remote-control', '--resume', '-r', '--teleport', '--worktree', '-w']);
   const variadicValueOptions = new Set([
     '--add-dir', '--allowedTools', '--allowed-tools', '--betas', '--disallowedTools', '--disallowed-tools', '--file', '--mcp-config',
-    '--plugin-dir', '--plugin-url', '--tools', '--channels', '--dangerously-load-development-channels',
+    '--tools', '--channels', '--dangerously-load-development-channels',
   ]);
 
   for (let index = 0; index < args.length; index += 1) {
