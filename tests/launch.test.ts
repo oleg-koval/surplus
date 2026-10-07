@@ -49,6 +49,35 @@ describe('provider executable lookup', () => {
       await rm(fixture, { recursive: true, force: true });
     }
   });
+
+  it('uses HOME-based managed wrapper lookup for empty and relative XDG_STATE_HOME', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-xdg-launch-'));
+    const originalCwd = process.cwd();
+    try {
+      const home = join(fixture, 'home');
+      const working = join(fixture, 'working');
+      const managedBin = join(home, '.local', 'state', 'surplus', 'bin');
+      const providerBin = join(fixture, 'provider-bin');
+      await Promise.all([mkdir(managedBin, { recursive: true }), mkdir(working), mkdir(providerBin)]);
+      const managedWrapper = join(managedBin, 'codex');
+      const realProvider = join(providerBin, 'codex');
+      await writeFile(managedWrapper, '#!/bin/sh\nexit 99\n');
+      await chmod(managedWrapper, 0o755);
+      await writeFile(realProvider, '#!/bin/sh\nexit 0\n');
+      await chmod(realProvider, 0o755);
+      process.chdir(working);
+
+      for (const xdgStateHome of ['', 'relative-state']) {
+        const found = await findExecutable('codex', {
+          HOME: home, XDG_STATE_HOME: xdgStateHome, PATH: [managedBin, providerBin].join(':'),
+        }, home);
+        expect(found).toBe(realProvider);
+      }
+    } finally {
+      process.chdir(originalCwd);
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('launch argument preservation', () => {

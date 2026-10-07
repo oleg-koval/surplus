@@ -5,6 +5,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import type { UsageSnapshot } from '../core/types.js';
+import { surplusDataDirectory } from '../core/xdg.js';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 const numberValue = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -34,7 +35,7 @@ export const readStatusLineInput = async (): Promise<unknown> => {
 
 export const readClaudeIdentityHash = (env = process.env): string | undefined => {
   const configuredBin = env.SURPLUS_CLAUDE_BIN;
-  const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? homedir(), '.local', 'state'), 'surplus', 'bin');
+  const wrapperDir = join(surplusDataDirectory(env, env.HOME ?? homedir()), 'bin');
   const canonicalPath = (path: string): string => {
     try { return realpathSync(path); } catch { return resolve(path); }
   };

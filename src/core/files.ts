@@ -1,11 +1,11 @@
 import { chmod, lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
 import type { Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSnapshot } from './types.js';
+import { surplusDataDirectory, xdgDirectory } from './xdg.js';
 
-export const dataDir = (): string => join(process.env.XDG_STATE_HOME ?? join(homedir(), '.local', 'state'), 'surplus');
-export const configPath = (): string => join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'surplus', 'config.json');
+export const dataDir = (): string => surplusDataDirectory();
+export const configPath = (): string => join(xdgDirectory('config'), 'surplus', 'config.json');
 const usagePath = (provider: Provider): string => join(dataDir(), `${provider}-usage.json`);
 const statePath = (provider: Provider): string => join(dataDir(), `${provider}-state.json`);
 const claudeIdentityPath = (): string => join(dataDir(), 'claude-identity.json');

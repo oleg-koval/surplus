@@ -46,9 +46,13 @@ describe('Claude statusline telemetry', () => {
       await writeFile(executable, `#!/bin/sh\nprintf '%s' '${JSON.stringify(identity)}'\n`);
       await chmod(executable, 0o755);
 
-      const identityHash = readClaudeIdentityHash({ PATH: [fileAliasBin, `${managedBin}/`, managedBinAlias, directoryBin, providerBin].join(':'), HOME: fixture });
-
-      expect(identityHash).toBe(createHash('sha256').update('fixture@example.test\norg-1\npro').digest('hex'));
+      for (const xdgStateHome of ['', 'relative-state']) {
+        const identityHash = readClaudeIdentityHash({
+          PATH: [fileAliasBin, `${managedBin}/`, managedBinAlias, directoryBin, providerBin].join(':'),
+          HOME: fixture, XDG_STATE_HOME: xdgStateHome,
+        });
+        expect(identityHash).toBe(createHash('sha256').update('fixture@example.test\norg-1\npro').digest('hex'));
+      }
       expect(readClaudeIdentityHash({ SURPLUS_CLAUDE_BIN: join(fileAliasBin, 'claude'), HOME: fixture })).toBeUndefined();
     } finally {
       await rm(fixture, { recursive: true, force: true });

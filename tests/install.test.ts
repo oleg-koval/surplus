@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { configPath, defaultConfig, saveConfig } from '../src/core/files.js';
+import { configPath, dataDir, defaultConfig, saveConfig } from '../src/core/files.js';
 import { installClaudeStatusLine, installShell, statuslineCommand, surplusExecutable, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
 
 const tempHomes: string[] = [];
@@ -29,6 +29,25 @@ afterEach(async () => {
 });
 
 describe('reversible install', () => {
+  it('falls back from empty or relative XDG homes to absolute HOME-based paths', async () => {
+    const originalCwd = process.cwd();
+    await withHome(async (home) => {
+      const workingDirectory = join(home, 'working');
+      await mkdir(workingDirectory);
+      process.chdir(workingDirectory);
+      try {
+        for (const [stateHome, configHome] of [['', ''], ['relative-state', 'relative-config']]) {
+          process.env.XDG_STATE_HOME = stateHome;
+          process.env.XDG_CONFIG_HOME = configHome;
+          expect(dataDir()).toBe(join(home, '.local', 'state', 'surplus'));
+          expect(configPath()).toBe(join(home, '.config', 'surplus', 'config.json'));
+        }
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+  });
+
   it('skips a directory named surplus and finds the executable later in PATH', async () => {
     await withHome(async (home) => {
       const directoryBin = join(home, 'directory-bin');

@@ -4,6 +4,7 @@ import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Provider } from './types.js';
+import { surplusDataDirectory } from './xdg.js';
 
 const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
   const valueOptions = new Set([
@@ -79,7 +80,7 @@ export const shouldAutomaticallyRoute = (stdinIsTTY: boolean | undefined, stdout
 
 export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeDirectory = homedir()): Promise<string | undefined> => {
   const explicit = env[`SURPLUS_${name.toUpperCase()}_BIN`];
-  const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? homeDirectory, '.local', 'state'), 'surplus', 'bin');
+  const wrapperDir = join(surplusDataDirectory(env, env.HOME ?? homeDirectory), 'bin');
   const canonicalPath = async (path: string): Promise<string> => {
     try { return await realpath(path); } catch { return resolve(path); }
   };
