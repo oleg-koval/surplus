@@ -5,6 +5,41 @@ import { delimiter, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Provider } from './types.js';
 
+const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
+  const valueOptions = new Set([
+    '--add-dir', '--agent', '--agents', '--allowedTools', '--allowed-tools', '--append-system-prompt', '--append-system-prompt-file',
+    '--autocompact', '--betas', '--debug-file', '--disallowedTools', '--disallowed-tools', '--effort', '--environment',
+    '--fallback-model', '--file', '--input-format', '--json-schema', '--max-budget-usd', '--mcp-config', '--name', '-n',
+    '--output-format', '--permission-mode', '--permission-prompts', '--plugin-dir', '--plugin-url', '--remote-control-session-name-prefix',
+    '--session-id', '--setting-sources', '--settings', '--system-prompt', '--system-prompt-file', '--system-prompt-snapshot',
+    '--advisor', '--channels', '--append-subagent-system-prompt', '--append-subagent-system-prompt-file',
+  ]);
+  const optionalValueOptions = new Set(['--debug', '--from-pr', '--cloud', '--prompt-suggestions', '--remote-control', '--resume', '-r', '--teleport', '--worktree', '-w']);
+  const variadicValueOptions = new Set([
+    '--add-dir', '--allowedTools', '--allowed-tools', '--betas', '--disallowedTools', '--disallowed-tools', '--file', '--mcp-config',
+    '--plugin-dir', '--plugin-url', '--tools', '--channels', '--dangerously-load-development-channels',
+  ]);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    const equalsIndex = arg.startsWith('--') ? arg.indexOf('=') : -1;
+    const option = equalsIndex >= 0 ? arg.slice(0, equalsIndex) : arg;
+    if (option.startsWith('-')) {
+      if (variadicValueOptions.has(option)) {
+        while (args[index + 1] !== undefined && !args[index + 1]?.startsWith('-')) index += 1;
+      } else if (valueOptions.has(option) && equalsIndex < 0) {
+        index += 1;
+      } else if (optionalValueOptions.has(option) && equalsIndex < 0 && args[index + 1] !== undefined && !args[index + 1]?.startsWith('-')) {
+        index += 1;
+      }
+      continue;
+    }
+    return arg;
+  }
+  return undefined;
+};
+
 export const hasExplicitOverride = (provider: Provider, args: readonly string[], env = process.env): boolean => {
   if (env.SURPLUS_MODEL || env.SURPLUS_EFFORT || env.CODEX_MODEL || env.ANTHROPIC_MODEL) return true;
   if (provider === 'claude' && (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_BASE_URL || env.CLAUDE_CODE_USE_BEDROCK || env.CLAUDE_CODE_USE_VERTEX || env.CLAUDE_CODE_USE_FOUNDRY || env.CLAUDE_CODE_EFFORT_LEVEL)) return true;
@@ -15,7 +50,7 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
   if (normalizedArgs.some((arg) => ['--json', '--output-format', '--version', '-v', '-V', '--help', '-h'].includes(arg))) return true;
   if (provider === 'claude') {
     const utilities = new Set(['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm', 'auto-mode', 'gateway', 'daemon', 'desktop', 'import', 'project', 'purge', 'remote-control', 'respawn', 'self-hosted-runner', 'ultrareview', 'teleport']);
-    return cliArgs.some((arg) => utilities.has(arg))
+    return utilities.has(claudeUtilityCommand(cliArgs) ?? '')
       || normalizedArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--environment', '--exec', '--desktop', '--bare', '--debug', '-d', '--verbose', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings', '--init-only', '--from-pr', '--teleport', '--fallback-model', '--advisor'].includes(arg) || /^-r.+/.test(arg));
   }
   if (normalizedArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg))) return true;

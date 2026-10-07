@@ -64,6 +64,16 @@ describe('launch argument preservation', () => {
     expect(hasExplicitOverride('claude', ['--', '--profile=literal prompt'])).toBe(false);
   });
 
+  it('classifies only Claude command position and skips option values', () => {
+    expect(hasExplicitOverride('claude', ['doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--append-system-prompt', 'doctor'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--append-system-prompt=doctor'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--append-system-prompt', 'instructions', 'doctor'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['a normal prompt', 'doctor'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--append-system-prompt', 'instructions', '--', 'doctor'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--allowedTools', 'doctor'])).toBe(false);
+  });
+
   it('adds model and effort flags only when requested', () => {
     expect(appendModel('claude', 'opus', ['folder'])).toEqual(['--model', 'opus', 'folder']);
     expect(appendEffort('codex', 'high', ['task'])).toEqual(['-c', 'model_reasoning_effort="high"', 'task']);
