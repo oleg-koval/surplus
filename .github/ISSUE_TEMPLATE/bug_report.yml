@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible Surplus issue without sharing private provider data.
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, prompts, transcripts, account email, or organization IDs.
+  - type: input
+    id: version
+    attributes:
+      label: Surplus version
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options:
+        - Claude Code
+        - Codex CLI
+        - Install or uninstall
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps and expected behavior
+      description: Share only redacted output and sample values.
+    validations:
+      required: true
