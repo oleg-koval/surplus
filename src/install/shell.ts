@@ -16,14 +16,19 @@ const wrapper = (provider: string): string => `#!/bin/sh\nexec surplus run ${pro
 const shellRc = (): string => {
   const shell = process.env.SHELL ?? '';
   const home = process.env.HOME ?? homedir();
-  if (shell.endsWith('/zsh')) return join(home, '.zshrc');
+  if (shell.endsWith('/zsh')) return join(process.env.ZDOTDIR ?? home, '.zshrc');
   if (shell.endsWith('/bash')) return join(home, process.platform === 'darwin' ? '.bash_profile' : '.bashrc');
   throw new Error('Surplus supports zsh and bash installation. Run `surplus run <provider>` directly for other shells.');
 };
 
 const shellRcCandidates = (): readonly string[] => {
   const home = process.env.HOME ?? homedir();
-  return [join(home, '.zshrc'), join(home, '.bash_profile'), join(home, '.bashrc')];
+  const zshDirectories = process.env.ZDOTDIR ? [process.env.ZDOTDIR, home] : [home];
+  return [...new Set([
+    ...zshDirectories.map((directory) => join(directory, '.zshrc')),
+    join(home, '.bash_profile'),
+    join(home, '.bashrc'),
+  ])];
 };
 
 const replaceManagedBlock = (source: string, replacement: string): string => {

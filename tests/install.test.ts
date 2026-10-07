@@ -12,6 +12,7 @@ const withHome = async (run: (home: string) => Promise<void>): Promise<void> => 
   tempHomes.push(home);
   process.env.HOME = home;
   process.env.SHELL = '/bin/zsh';
+  delete process.env.ZDOTDIR;
   delete process.env.CLAUDE_CONFIG_DIR;
   process.env.XDG_STATE_HOME = join(home, 'state');
   process.env.XDG_CONFIG_HOME = join(home, 'config');
@@ -22,6 +23,7 @@ afterEach(async () => {
   for (const home of tempHomes.splice(0)) await rm(home, { recursive: true, force: true });
   delete process.env.XDG_STATE_HOME;
   delete process.env.XDG_CONFIG_HOME;
+  delete process.env.ZDOTDIR;
   delete process.env.CLAUDE_CONFIG_DIR;
 });
 
@@ -66,6 +68,28 @@ describe('reversible install', () => {
       expect(await readFile(zsh, 'utf8')).toBe('');
       expect(await readFile(bash, 'utf8')).toBe('export BASH_VALUE=kept\n');
       await expect(readFile(join(home, 'state/surplus/bin/codex'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('installs into ZDOTDIR and removes only its current and home startup blocks', async () => {
+    await withHome(async (home) => {
+      const zshDir = join(home, 'custom-zsh');
+      const customRc = join(zshDir, '.zshrc');
+      const homeRc = join(home, '.zshrc');
+      await mkdir(zshDir);
+      await writeFile(customRc, 'export CUSTOM_VALUE=kept\n');
+      await writeFile(homeRc, 'export HOME_VALUE=untouched\n');
+      process.env.ZDOTDIR = zshDir;
+
+      await installShell();
+      const installed = await readFile(customRc, 'utf8');
+      expect(installed).toContain('export CUSTOM_VALUE=kept');
+      expect(installed).toContain('surplus managed block');
+      expect(await readFile(homeRc, 'utf8')).toBe('export HOME_VALUE=untouched\n');
+
+      await uninstallShell();
+      expect(await readFile(customRc, 'utf8')).toBe('export CUSTOM_VALUE=kept\n');
+      expect(await readFile(homeRc, 'utf8')).toBe('export HOME_VALUE=untouched\n');
     });
   });
 
