@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { basename } from 'node:path';
+import { constants as osConstants } from 'node:os';
 import type { Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
@@ -23,6 +24,7 @@ Usage:
 const isProvider = (value: string | undefined): value is Provider => value === 'claude' || value === 'codex';
 const configured = (config: Awaited<ReturnType<typeof readConfig>>, provider: Provider): ProviderConfig => config.providers[provider];
 const minutes = (value: number): string => `${String(value)}m`;
+const osSignalNumber = (signal: NodeJS.Signals): number | undefined => osConstants.signals[signal];
 
 const showDecision = (decision: ReturnType<typeof decide>): void => {
   const remaining = decision.weeklyRemainingPercent === null ? 'unknown' : `${decision.weeklyRemainingPercent.toFixed(1)}%`;
@@ -45,7 +47,9 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
   if (!command) return;
   const child = spawn('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
   let output = '';
+  let receivedSignal: NodeJS.Signals | undefined;
   child.stdout.setEncoding('utf8').on('data', (chunk: string) => { output += chunk; });
+  child.stdin.on('error', () => { /* The original statusline may exit before consuming the input. */ });
   child.stdin.end(typeof input === 'object' ? JSON.stringify(input) : '');
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -53,10 +57,20 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      for (const [signal, handler] of signalHandlers) process.off(signal, handler);
       resolve();
     };
-    const timeout = setTimeout(() => {
+    const terminateGroup = (): void => {
       try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+    };
+    const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+    const signalHandlers = new Map<NodeJS.Signals, () => void>(signals.map((signal) => [signal, () => {
+      receivedSignal = signal;
+      terminateGroup();
+    }]));
+    for (const [signal, handler] of signalHandlers) process.on(signal, handler);
+    const timeout = setTimeout(() => {
+      terminateGroup();
       child.stdout.destroy();
       child.stdin.destroy();
       finish();
@@ -65,6 +79,10 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
     child.once('close', finish);
   });
   process.stdout.write(output);
+  if (receivedSignal) {
+    const signalNumber = osSignalNumber(receivedSignal);
+    if (signalNumber !== undefined) process.exitCode = 128 + signalNumber;
+  }
 };
 
 const getClaudeUsage = async (): Promise<{ readonly usage?: UsageSnapshot; readonly identityHash?: string }> => {

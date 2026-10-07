@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { appendEffort, appendModel, hasExplicitOverride, shouldAutomaticallyRoute } from '../src/core/launch.js';
+import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldAutomaticallyRoute } from '../src/core/launch.js';
 
 describe('launch argument preservation', () => {
   it('does not override explicit model, profile, effort, or scripted invocation choices', () => {
-    for (const args of [['--model', 'sonnet'], ['-mopus'], ['--effort=low'], ['--resume', 'id'], ['--print'], ['--settings', 'x.json'], ['--environment', 'local'], ['--exec', 'prompt'], ['--desktop'], ['auto-mode'], ['--debug', 'gateway']]) {
+    for (const args of [['--model', 'sonnet'], ['-mopus'], ['--effort=low'], ['--profile=work'], ['--resume', 'id'], ['-rSESSION'], ['--print'], ['--settings', 'x.json'], ['--settings=x.json'], ['--agent=worker'], ['--environment', 'local'], ['--exec', 'prompt'], ['--desktop'], ['auto-mode'], ['--debug', 'gateway']]) {
       expect(hasExplicitOverride('claude', args)).toBe(true);
     }
-    for (const args of [['--model', 'gpt'], ['-p', 'work'], ['--config', 'model="gpt"'], ['exec', 'prompt']]) {
+    for (const args of [['--model', 'gpt'], ['-p', 'work'], ['--config', 'model="gpt"'], ['-cmodel="gpt"'], ['exec', 'prompt']]) {
       expect(hasExplicitOverride('codex', args)).toBe(true);
     }
     for (const args of [['--sandbox', 'read-only', 'exec', 'prompt'], ['-s', 'read-only', 'e', 'prompt'], ['apply'], ['--oss'], ['--local-provider', 'ollama'], ['--remote', 'wss://example.test']]) {
       expect(hasExplicitOverride('codex', args)).toBe(true);
     }
     expect(hasExplicitOverride('claude', ['--', '--model', 'literal prompt'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--', '--profile=literal prompt'])).toBe(false);
   });
 
   it('adds model and effort flags only when requested', () => {
@@ -31,5 +32,9 @@ describe('launch argument preservation', () => {
     expect(shouldAutomaticallyRoute(false, true)).toBe(false);
     expect(shouldAutomaticallyRoute(true, false)).toBe(false);
     expect(shouldAutomaticallyRoute(undefined, undefined)).toBe(false);
+  });
+
+  it('preserves the operating system signal exit code for provider processes', async () => {
+    await expect(launchProvider('claude', ['-e', "process.kill(process.pid, 'SIGKILL')"], { SURPLUS_CLAUDE_BIN: process.execPath })).resolves.toBe(137);
   });
 });

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const root = new URL('..', import.meta.url).pathname;
 const fixture = await mkdtemp(join(tmpdir(), 'surplus-package-smoke-'));
@@ -78,13 +78,36 @@ try {
   assert.equal(timed.status, 0, `a stalled chained statusline should time out cleanly: ${timed.stderr}`);
   assert.ok(Date.now() - timeoutStart < 5_000, 'a stalled statusline subprocess must not hold Claude startup open');
 
+  const earlyExitCommand = Buffer.from('exit 0').toString('base64');
+  const largeInput = JSON.stringify({ payload: 'x'.repeat(2 * 1024 * 1024) });
+  const earlyExit = spawnSync('/bin/sh', ['-c', `${statuslineCommand} --original=${earlyExitCommand}`], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash }, input: largeInput, timeout: 6_000 });
+  assert.equal(earlyExit.status, 0, `an original statusline that exits before reading input must not trigger EPIPE (${earlyExit.status}): ${earlyExit.stderr}`);
+
+  const readyPath = join(fixture, 'statusline-ready');
+  const orphanPath = join(fixture, 'statusline-orphan');
+  const cancellable = Buffer.from(`printf ready > '${readyPath}'; sleep 1; printf orphan > '${orphanPath}'`).toString('base64');
+  const capture = spawn(surplus, ['capture', 'claude', `--original=${cancellable}`], { stdio: ['pipe', 'ignore', 'pipe'], env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash } });
+  capture.stdin.end(sample);
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try { await readFile(readyPath); break; } catch { await new Promise((resolve) => setTimeout(resolve, 25)); }
+  }
+  await readFile(readyPath);
+  assert.equal(capture.kill('SIGTERM'), true, 'the active capture process should accept cancellation');
+  const canceled = await new Promise((resolve, reject) => {
+    capture.once('error', reject);
+    capture.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  assert.deepEqual(canceled, { code: 143, signal: null }, 'capture should finish with the received signal status after terminating its process group');
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  await assert.rejects(readFile(orphanPath), { code: 'ENOENT' }, 'cancellation must kill the original statusline process group');
+
   const altered = `# user replacement\n`;
   await writeFile(wrapper, altered);
   run(surplus, ['uninstall'], { env });
   assert.equal(await readFile(wrapper, 'utf8'), altered, 'uninstall must keep a user-edited wrapper');
   const restoredSettings = JSON.parse(await readFile(join(home, '.claude', 'settings.json'), 'utf8'));
   assert.deepEqual(restoredSettings.statusLine, priorStatusLine, 'uninstall must restore the prior Claude statusline');
-  process.stdout.write('Packed install, first-run account-bound capture, original statusline, noninteractive argument passthrough, bounded timeout, provider exit codes, and conservative uninstall passed.\n');
+  process.stdout.write('Packed install, first-run account-bound capture, statusline pipe and cancellation handling, noninteractive passthrough, bounded timeout, provider signal exit codes, and conservative uninstall passed.\n');
 } finally {
   await rm(fixture, { recursive: true, force: true });
 }

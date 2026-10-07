@@ -174,7 +174,13 @@ export const uninstallClaudeStatusLine = async (): Promise<void> => {
     } else {
       settings.statusLine = prior;
     }
-  } else delete settings.statusLine;
+  } else {
+    const restored = { ...(current as Record<string, unknown>) };
+    delete restored.type;
+    delete restored.command;
+    if (Object.keys(restored).length > 0) settings.statusLine = restored;
+    else delete settings.statusLine;
+  }
   await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
   await unlink(backupPath);
 };

@@ -1,5 +1,6 @@
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Provider } from './types.js';
@@ -9,15 +10,16 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
   if (provider === 'claude' && (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_BASE_URL || env.CLAUDE_CODE_USE_BEDROCK || env.CLAUDE_CODE_USE_VERTEX || env.CLAUDE_CODE_USE_FOUNDRY || env.CLAUDE_CODE_EFFORT_LEVEL)) return true;
   const sentinel = args.indexOf('--');
   const cliArgs = sentinel < 0 ? args : args.slice(0, sentinel);
-  if (cliArgs.some((arg) => ['--model', '-m', '--effort', '--profile', '-p'].includes(arg) || arg.startsWith('--model=') || arg.startsWith('--effort=') || /^-[mp].+/.test(arg))) return true;
-  if (cliArgs.some((arg) => ['--json', '--output-format', '--output-format=json', '--output-format=stream-json', '--version', '-v', '-V', '--help', '-h'].includes(arg))) return true;
+  const normalizedArgs = cliArgs.map((arg) => arg.startsWith('--') && arg.includes('=') ? arg.slice(0, arg.indexOf('=')) : arg);
+  if (normalizedArgs.some((arg) => ['--model', '-m', '--effort', '--profile', '-p'].includes(arg) || /^-[mp].+/.test(arg))) return true;
+  if (normalizedArgs.some((arg) => ['--json', '--output-format', '--version', '-v', '-V', '--help', '-h'].includes(arg))) return true;
   if (provider === 'claude') {
     const utilities = new Set(['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm', 'auto-mode', 'gateway', 'daemon', 'desktop', 'import', 'project', 'respawn', 'ultrareview', 'teleport']);
     return cliArgs.some((arg) => utilities.has(arg))
-      || cliArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--environment', '--exec', '--desktop', '--bare', '--debug', '-d', '--verbose', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings'].includes(arg) || arg.startsWith('--resume=') || arg.startsWith('--cloud=') || arg.startsWith('--environment='));
+      || normalizedArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--environment', '--exec', '--desktop', '--bare', '--debug', '-d', '--verbose', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings'].includes(arg) || /^-r.+/.test(arg));
   }
-  if (cliArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg) || arg.startsWith('--local-provider=') || arg.startsWith('--remote=') || arg.startsWith('--remote-auth-token-env='))) return true;
-  if (cliArgs.some((arg) => ['--config', '-c', '--worktree', '-C', '--cd'].includes(arg) || arg.startsWith('--config=') || arg.startsWith('--cd=') || /^-C.+/.test(arg))) return true;
+  if (normalizedArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg))) return true;
+  if (normalizedArgs.some((arg) => ['--config', '-c', '--worktree', '-C', '--cd'].includes(arg) || /^-[cC].+/.test(arg))) return true;
   const utilityCommands = new Set(['agents', 'exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'app-server', 'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'queue', 'archive', 'delete', 'unarchive', 'migrate-rollouts', 'cloud', 'cloud-tasks', 'exec-server', 'features', 'help', 'resume', 'fork']);
   const valueOptions = new Set(['-c', '--config', '--enable', '--disable', '--remote', '--remote-auth-token-env', '-i', '--image', '-m', '--model', '-p', '--profile', '-s', '--sandbox', '-a', '--ask-for-approval', '-C', '--cd', '--add-dir']);
   let command: string | undefined;
@@ -64,7 +66,7 @@ export const launchProvider = async (provider: Provider, args: readonly string[]
     });
     child.once('close', (code, signal) => {
       removeHandlers();
-      const signalNumber = signal === 'SIGINT' ? 2 : signal === 'SIGTERM' ? 15 : signal === 'SIGHUP' ? 1 : undefined;
+      const signalNumber = signal ? osConstants.signals[signal] : undefined;
       void onStartedPromise.then(() => { resolve(code ?? (signalNumber ? 128 + signalNumber : 1)); }).catch(reject);
     });
   });

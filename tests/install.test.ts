@@ -99,6 +99,18 @@ describe('reversible install', () => {
     });
   });
 
+  it('keeps later non-owned fields when uninstalling a newly-added statusline', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      await installClaudeStatusLine();
+      const installed = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: Record<string, unknown> };
+      await writeFile(settings, JSON.stringify({ statusLine: { ...installed.statusLine, padding: 12 } }));
+      await uninstallClaudeStatusLine();
+      const current = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: Record<string, unknown> };
+      expect(current.statusLine).toEqual({ padding: 12 });
+    });
+  });
+
   it('updates a shell startup file through its symlink without replacing the link', async () => {
     await withHome(async (home) => {
       const rc = join(home, '.zshrc');
