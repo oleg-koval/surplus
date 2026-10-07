@@ -129,21 +129,25 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   if (current !== undefined && (typeof current !== 'object' || current === null || Array.isArray(current) || (current as Record<string, unknown>).type !== 'command' || !existingCommand)) {
     throw new Error('Surplus can only chain a Claude command statusline; preserve other statusline types manually.');
   }
-  let previous: { readonly present?: boolean; readonly value?: unknown; readonly managedCommand?: string } | undefined;
+  let previous: { readonly present: boolean; readonly value?: unknown; readonly managedCommand: string } | undefined;
+  let previousBackupContents: string | undefined;
   try {
-    const saved: unknown = JSON.parse(await readFile(path, 'utf8')) as unknown;
-    if (typeof saved === 'object' && saved !== null && !Array.isArray(saved)) {
-      const row = saved as Record<string, unknown>;
-      if (typeof row.managedCommand === 'string') {
-        previous = {
-          ...(typeof row.present === 'boolean' ? { present: row.present } : {}),
-          value: row.value,
-          managedCommand: row.managedCommand,
-        };
-      }
+    previousBackupContents = await readFile(path, 'utf8');
+    let saved: unknown;
+    try { saved = JSON.parse(previousBackupContents) as unknown; } catch { throw new Error('Surplus Claude statusline backup is malformed; refusing to replace it.'); }
+    if (typeof saved !== 'object' || saved === null || Array.isArray(saved)) {
+      throw new Error('Surplus Claude statusline backup is invalid; refusing to replace it.');
     }
+    const row = saved as Record<string, unknown>;
+    if (typeof row.present !== 'boolean' || typeof row.managedCommand !== 'string') {
+      throw new Error('Surplus Claude statusline backup is invalid; refusing to replace it.');
+    }
+    previous = { present: row.present, value: row.value, managedCommand: row.managedCommand };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Surplus Claude statusline backup is unreadable; refusing to replace it.');
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (error instanceof Error && (error.message.includes('malformed') || error.message.includes('invalid'))) throw error;
+      throw new Error('Surplus Claude statusline backup is unreadable; refusing to replace it.');
+    }
   }
   const alreadyOwned = previous !== undefined && existingCommand === previous.managedCommand;
   const originalCommand = alreadyOwned && previous
@@ -156,27 +160,56 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   if (alreadyOwned && existingCommand === managedCommand) return false;
   if (!alreadyOwned && currentObject?.command === managedCommand) return false;
   const backup = alreadyOwned && previous
-    ? { present: previous.present ?? false, value: previous.value, managedCommand }
+    ? { present: previous.present, value: previous.value, managedCommand }
     : { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand };
-  await writeAtomic(path, `${JSON.stringify(backup, null, 2)}\n`, 0o600);
+  const newBackupContents = `${JSON.stringify(backup, null, 2)}\n`;
+  await writeAtomic(path, newBackupContents, 0o600);
   settings.statusLine = { ...(currentObject ?? {}), type: 'command', command: managedCommand };
-  await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
+  try {
+    await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
+  } catch (error) {
+    try {
+      if (previousBackupContents !== undefined) {
+        await writeAtomic(path, previousBackupContents, 0o600);
+      } else if (await readFile(path, 'utf8') === newBackupContents) {
+        await unlink(path);
+      }
+    } catch {
+      throw new Error('Claude statusline update failed and its prior backup could not be restored.');
+    }
+    throw error;
+  }
   return !alreadyOwned;
 };
 
 export const uninstallClaudeStatusLine = async (): Promise<void> => {
   const settingsPath = claudeSettingsPath();
   const backupPath = join(dataDir(), 'claude-statusline-backup.json');
-  let backup: { present?: boolean; value?: unknown; managedCommand?: string };
-  let settings: Record<string, unknown>;
-  try {
-    backup = JSON.parse(await readFile(backupPath, 'utf8')) as { present?: boolean; value?: unknown };
-    settings = JSON.parse(await readFile(settingsPath, 'utf8')) as Record<string, unknown>;
-  } catch { return; }
+  let backupText: string;
+  try { backupText = await readFile(backupPath, 'utf8'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw new Error('Cannot read the Surplus Claude statusline backup; fix its permissions before uninstalling.');
+  }
+  let parsedBackup: unknown;
+  try { parsedBackup = JSON.parse(backupText) as unknown; } catch { throw new Error('Surplus Claude statusline backup is malformed; refusing to uninstall.'); }
+  if (typeof parsedBackup !== 'object' || parsedBackup === null || Array.isArray(parsedBackup)
+    || typeof (parsedBackup as Record<string, unknown>).present !== 'boolean'
+    || typeof (parsedBackup as Record<string, unknown>).managedCommand !== 'string') {
+    throw new Error('Surplus Claude statusline backup is invalid; refusing to uninstall.');
+  }
+  const backup = parsedBackup as { present: boolean; value?: unknown; managedCommand: string };
+  let settingsText: string;
+  try { settingsText = await readFile(settingsPath, 'utf8'); } catch {
+    throw new Error('Cannot read Claude settings.json; fix its permissions before uninstalling.');
+  }
+  let parsedSettings: unknown;
+  try { parsedSettings = JSON.parse(settingsText) as unknown; } catch { throw new Error('Claude settings.json is malformed; refusing to uninstall.'); }
+  if (typeof parsedSettings !== 'object' || parsedSettings === null || Array.isArray(parsedSettings)) {
+    throw new Error('Claude settings.json is invalid; refusing to uninstall.');
+  }
+  const settings = parsedSettings as Record<string, unknown>;
   const current = settings.statusLine;
-  const previousCommand = typeof backup.value === 'object' && backup.value !== null && !Array.isArray(backup.value) && typeof (backup.value as Record<string, unknown>).command === 'string'
-    ? (backup.value as Record<string, string>).command : undefined;
-  const ownedCommand = typeof backup.managedCommand === 'string' ? backup.managedCommand : statuslineCommand(previousCommand);
+  const ownedCommand = backup.managedCommand;
   if (typeof current !== 'object' || current === null || Array.isArray(current)
     || (current as Record<string, unknown>).type !== 'command'
     || (current as Record<string, unknown>).command !== ownedCommand) return;

@@ -107,7 +107,8 @@ try {
   assert.equal(await readFile(wrapper, 'utf8'), altered, 'uninstall must keep a user-edited wrapper');
   const restoredSettings = JSON.parse(await readFile(join(home, '.claude', 'settings.json'), 'utf8'));
   assert.deepEqual(restoredSettings.statusLine, priorStatusLine, 'uninstall must restore the prior Claude statusline');
-  process.stdout.write('Packed install, first-run account-bound capture, statusline pipe and cancellation handling, noninteractive passthrough, bounded timeout, provider signal exit codes, and conservative uninstall passed.\n');
+  run('python3', [join(root, 'scripts/pty-signal-smoke.py'), surplus, join(root, 'tests/fixtures/signal-provider.mjs')], { cwd: root });
+  process.stdout.write('Packed install, first-run account-bound capture, statusline pipe and cancellation handling, noninteractive passthrough, bounded timeout, provider signal exit codes, PTY Ctrl-C forwarding, and conservative uninstall passed.\n');
 } finally {
   await rm(fixture, { recursive: true, force: true });
 }

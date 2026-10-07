@@ -56,7 +56,10 @@ export const launchProvider = async (provider: Provider, args: readonly string[]
   const child = spawn(executable, [...args], { stdio: 'inherit', env });
   return await new Promise((resolve, reject) => {
     const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-    const handlers = new Map<NodeJS.Signals, () => void>(signals.map((signal) => [signal, () => { child.kill(signal); }]));
+    const forwardSignals = !(process.stdin.isTTY && process.stdout.isTTY);
+    const handlers = new Map<NodeJS.Signals, () => void>(signals.map((signal) => [signal, () => {
+      if (forwardSignals) child.kill(signal);
+    }]));
     handlers.forEach((handler, signal) => process.on(signal, handler));
     const removeHandlers = (): void => { handlers.forEach((handler, signal) => { process.off(signal, handler); }); };
     child.once('error', (error) => { removeHandlers(); reject(error); });

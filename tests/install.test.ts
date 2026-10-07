@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -96,6 +96,65 @@ describe('reversible install', () => {
       await uninstallClaudeStatusLine();
       const restored = JSON.parse(await readFile(settingsPath, 'utf8')) as { statusLine: Record<string, unknown> };
       expect(restored.statusLine).toEqual({ ...original, padding: 16, localEdit: true });
+    });
+  });
+
+  it('restores the exact prior statusline backup when settings cannot be updated', async () => {
+    await withHome(async (home) => {
+      const settingsPath = join(home, '.claude', 'settings.json');
+      const settingsDirectory = join(home, '.claude');
+      const backupPath = join(home, 'state/surplus/claude-statusline-backup.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(settingsDirectory, { recursive: true }));
+      await writeFile(settingsPath, JSON.stringify({ statusLine: { type: 'command', command: 'original', padding: 8 } }));
+      await installClaudeStatusLine();
+      const firstBackup = JSON.parse(await readFile(backupPath, 'utf8')) as { present: boolean; value: unknown; managedCommand: string };
+      const oldCommand = '/old/node /old/cli.js capture claude';
+      const priorBackup = JSON.stringify({ ...firstBackup, managedCommand: oldCommand });
+      const originalSettings = JSON.stringify({ statusLine: { type: 'command', command: oldCommand, padding: 16 } });
+      await writeFile(backupPath, priorBackup);
+      await writeFile(settingsPath, originalSettings);
+
+      await chmod(settingsDirectory, 0o500);
+      try { await expect(installClaudeStatusLine()).rejects.toThrow(); } finally { await chmod(settingsDirectory, 0o700); }
+
+      expect(await readFile(backupPath, 'utf8')).toBe(priorBackup);
+      expect(await readFile(settingsPath, 'utf8')).toBe(originalSettings);
+    });
+  });
+
+  it('removes a newly-created backup when the first statusline settings write fails', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      const backup = join(home, 'state/surplus/claude-statusline-backup.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      await symlink(join(home, 'missing-settings-target'), settings);
+      await expect(installClaudeStatusLine()).rejects.toThrow();
+      await expect(readFile(backup, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      expect((await lstat(settings)).isSymbolicLink()).toBe(true);
+    });
+  });
+
+  it('fails uninstall visibly when Claude settings are malformed, before shell cleanup', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      const shell = join(home, '.zshrc');
+      await installClaudeStatusLine();
+      await installShell();
+      await writeFile(settings, '{broken');
+      await expect(main(['uninstall'])).rejects.toThrow(/Claude settings.json is malformed/);
+      expect(await readFile(shell, 'utf8')).toContain('surplus managed block');
+    });
+  });
+
+  it('fails uninstall visibly when the Claude backup is malformed, before shell cleanup', async () => {
+    await withHome(async (home) => {
+      const backup = join(home, 'state/surplus/claude-statusline-backup.json');
+      const shell = join(home, '.zshrc');
+      await installClaudeStatusLine();
+      await installShell();
+      await writeFile(backup, '{broken');
+      await expect(main(['uninstall'])).rejects.toThrow(/backup is malformed/);
+      expect(await readFile(shell, 'utf8')).toContain('surplus managed block');
     });
   });
 
