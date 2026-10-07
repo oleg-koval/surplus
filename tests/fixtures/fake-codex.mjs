@@ -13,14 +13,15 @@ if (process.argv.includes('app-server')) {
     if (request.method === 'account/read') result = { account: { type: 'chatgpt' } };
     if (request.method === 'account/rateLimits/read') {
       const now = Math.floor(Date.now() / 1000);
+      const resetsAt = Number(process.env.SURPLUS_TEST_RESETS_AT ?? now + 3600);
       result = {
         ordinaryUsageAllowed: true,
         rateLimitsByLimitId: { codex: { primary: {
-          usedPercent: Number(process.env.SURPLUS_TEST_WEEKLY_USED), resetsAt: now + 3600, windowDurationMins: 10080,
+          usedPercent: Number(process.env.SURPLUS_TEST_WEEKLY_USED), resetsAt, windowDurationMins: 10080,
         } } },
       };
     }
-    if (request.method === 'config/read') result = { config: { model: 'gpt-test', model_reasoning_effort: 'low' } };
+    if (request.method === 'config/read') result = { config: { model: 'gpt-test', model_reasoning_effort: process.env.SURPLUS_TEST_EFFECTIVE_EFFORT ?? 'low' } };
     if (request.method === 'model/list') result = { data: [{
       model: 'gpt-test', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }],
     }] };

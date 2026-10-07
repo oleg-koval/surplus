@@ -13,6 +13,8 @@ export const codexUpgradeConfig = (config: ProviderConfig, discovery: CodexDisco
   const targetRank = effort ? effortRank[effort] : undefined;
   const alreadyHighEnough = config.premiumModel === 'auto'
     && (currentRank === undefined || targetRank === undefined || currentRank >= targetRank);
-  if (!candidate || !effort || !supportsEffort || !model || alreadyHighEnough) return { ...config, minWeeklyRemainingPercent: 101 };
+  if (!candidate || !effort || !supportsEffort || !model || alreadyHighEnough) {
+    return { ...config, minWeeklyRemainingPercent: 101, hysteresisPercent: 0 };
+  }
   return { ...config, premiumModel: config.premiumModel === 'auto' ? 'auto' : model };
 };

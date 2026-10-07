@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 
 
 def start_pty(surplus: str, args: list[str], environment: dict[str, str], stdout_is_tty: bool = True) -> tuple[int, int]:
@@ -153,10 +154,52 @@ def corrupt_config_falls_back(surplus: str, provider: str) -> None:
             os.close(terminal)
 
 
+def no_codex_effort_downgrade(surplus: str, provider: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="surplus-effort-fallback-") as home:
+        state_dir = os.path.join(home, "state", "surplus")
+        os.makedirs(state_dir)
+        reset_at = int(time.time()) + 3600
+        reset_iso = datetime.fromtimestamp(reset_at, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        state_path = os.path.join(state_dir, "codex-state.json")
+        with open(state_path, "w", encoding="utf-8") as state_file:
+            json.dump({"tier": "premium", "resetAt": reset_iso, "observedAt": datetime.now(timezone.utc).isoformat()}, state_file)
+
+        provider_args = os.path.join(home, "provider-args.jsonl")
+        environment = os.environ.copy()
+        environment.update({
+            "HOME": home,
+            "XDG_CONFIG_HOME": os.path.join(home, "config"),
+            "XDG_STATE_HOME": os.path.join(home, "state"),
+            "SURPLUS_CODEX_BIN": provider,
+            "SURPLUS_TEST_WEEKLY_USED": "0",
+            "SURPLUS_TEST_RESETS_AT": str(reset_at),
+            "SURPLUS_TEST_EFFECTIVE_EFFORT": "xhigh",
+            "SURPLUS_TEST_PROVIDER_ARGS": provider_args,
+        })
+        pid, terminal = start_pty(surplus, ["run", "codex", "task"], environment)
+        try:
+            status = wait_pty(pid, terminal)
+            if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
+                raise RuntimeError(f"Codex launch failed with a higher current effort: wait status {status}")
+            with open(provider_args, encoding="utf-8") as args_file:
+                args = [json.loads(line) for line in args_file if line.strip()]
+            if args != [["task"]]:
+                raise RuntimeError(f"disabled Codex effort upgrade changed provider arguments: {args}")
+            with open(state_path, encoding="utf-8") as state_file:
+                state = json.load(state_file)
+            if state.get("tier") != "default":
+                raise RuntimeError(f"unsafe effort upgrade persisted non-default state: {state}")
+            if os.path.exists(os.path.join(state_dir, "activations.json")):
+                raise RuntimeError("a disabled Codex effort upgrade incremented premium activation count")
+        finally:
+            os.close(terminal)
+
+
 def main() -> None:
     surplus, signal_provider, codex_provider = sys.argv[1:]
     readonly_status_then_default_launch(surplus, codex_provider)
     corrupt_config_falls_back(surplus, codex_provider)
+    no_codex_effort_downgrade(surplus, codex_provider)
     terminal_signal_once(surplus, signal_provider, signal.SIGINT, targeted=False)
     terminal_signal_once(surplus, signal_provider, signal.SIGTERM, targeted=True)
     terminal_signal_once(surplus, signal_provider, signal.SIGINT, targeted=False, stdout_is_tty=False)

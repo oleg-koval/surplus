@@ -7,6 +7,7 @@ import { parseClaudeStatusLine, readClaudeIdentityHash } from '../src/providers/
 import { codexLimitSnapshot, codexWindows, selectEffectiveCodexModel } from '../src/providers/codex.js';
 import { codexUpgradeConfig } from '../src/core/codex-policy.js';
 import { defaultConfig } from '../src/core/files.js';
+import { decide } from '../src/core/policy.js';
 
 const now = new Date('2026-10-07T12:00:00.000Z');
 
@@ -89,8 +90,28 @@ describe('Codex effort upgrade guard', () => {
 
   it('only raises reasoning for the effective model when the catalog confirms it', () => {
     expect(codexUpgradeConfig(config, discovery).premiumEffort).toBe('high');
-    expect(codexUpgradeConfig(config, { ...discovery, effectiveEffort: 'xhigh' }).minWeeklyRemainingPercent).toBe(101);
-    expect(codexUpgradeConfig(config, { ...discovery, effectiveModel: undefined }).minWeeklyRemainingPercent).toBe(101);
+    expect(codexUpgradeConfig(config, { ...discovery, effectiveEffort: 'xhigh' })).toMatchObject({ minWeeklyRemainingPercent: 101, hysteresisPercent: 0 });
+    expect(codexUpgradeConfig(config, { ...discovery, effectiveModel: undefined })).toMatchObject({ minWeeklyRemainingPercent: 101, hysteresisPercent: 0 });
+  });
+
+  it('stays default with full weekly headroom when the current effort cannot safely be raised', () => {
+    if (!discovery.usage) throw new Error('fixture usage is required');
+    const resetAt = discovery.usage.resetsAt;
+    const previous = { tier: 'premium' as const, resetAt, observedAt: now.toISOString() };
+    const cases = [
+      { ...discovery, effectiveEffort: 'xhigh' },
+      { ...discovery, effectiveEffort: 'unrecognized-effort' },
+      { ...discovery, models: [] },
+    ];
+
+    for (const candidate of cases) {
+      const disabled = codexUpgradeConfig(config, candidate);
+      const decision = decide({
+        usage: { ...discovery.usage, weeklyUsedPercent: 0 }, config: disabled, previous, now,
+      });
+      expect(decision.tier).toBe('default');
+      expect(disabled.hysteresisPercent).toBe(0);
+    }
   });
 
   it('permits an explicitly configured premium model when its requested effort is supported', () => {
