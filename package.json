@@ -45,12 +45,22 @@
     "surplus": "node dist/cli.js",
     "smoke:package": "npm run build && node scripts/package-smoke.mjs",
     "prepare": "npm run build",
-    "ci": "npm run typecheck && npm run lint && npm test"
+    "ci": "npm run typecheck && npm run lint && npm test",
+    "semantic-release": "semantic-release",
+    "release:dry-run": "semantic-release --dry-run --no-ci"
   },
   "devDependencies": {
     "@eslint/js": "^9.26.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.10",
+    "@semantic-release/npm": "^13.2.0",
+    "@semantic-release/release-notes-generator": "^14.1.1",
     "@types/node": "^22.15.0",
     "eslint": "^9.26.0",
+    "semantic-release": "^25.0.9",
+    "semantic-release-npm-github-publish": "^1.7.7",
     "tsup": "^8.4.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.31.1",
