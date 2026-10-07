@@ -159,6 +159,27 @@ describe('reversible install', () => {
     });
   });
 
+  it('uninstalls Bash integration when zsh is not installed and no zshenv exists', async () => {
+    await withHome(async (home) => {
+      const originalPath = process.env.PATH;
+      process.env.SHELL = '/bin/bash';
+      try {
+        await installShell();
+        const pathWithoutZsh = join(home, 'path-without-zsh');
+        await mkdir(pathWithoutZsh);
+        process.env.PATH = pathWithoutZsh;
+
+        await uninstallShell();
+
+        expect(await readFile(join(home, '.bashrc'), 'utf8')).toBe('');
+        expect(await readFile(join(home, '.bash_profile'), 'utf8')).toBe('');
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      }
+    });
+  });
+
   it('rolls back the first Bash startup write when the login profile write fails', async () => {
     await withHome(async (home) => {
       process.env.SHELL = '/bin/bash';

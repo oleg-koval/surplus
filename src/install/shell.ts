@@ -1,7 +1,7 @@
 import { access, chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, existsSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,8 @@ const zshStartupDirectory = (home: string): string => {
     encoding: 'buffer', timeout: 1_000, maxBuffer: 16 * 1024,
     env: { ...process.env, HOME: home },
   });
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
+    && !shell.endsWith('/zsh') && shell !== 'zsh' && !existsSync(join(home, '.zshenv'))) return home;
   if (result.error || result.status !== 0) {
     throw new Error('Could not resolve zsh ZDOTDIR from its startup files; set ZDOTDIR in the environment and retry.');
   }
