@@ -113,4 +113,4 @@ On launch day, read issues and replies after publication and fix verified proble
 
 Record the reviewed PR and merged head, downloadable package, live demo, actual social post URLs, publication timestamp, and seven-day review date in the corresponding GitHub release notes. Keep unsuccessful or unavailable channels explicitly separate from published ones.
 
-GitHub release installation is the initial distribution path. npm registry publication requires separate publishing authentication; never describe a GitHub package as an npm registry release.
+The npm registry package `surplus-cli` is the distribution path. Pushing a `v*` tag runs `.github/workflows/release.yml`, which checks the tag matches `package.json`, runs CI and the package smoke test, publishes to npm with provenance, and attaches the same tarball to the GitHub release. Verify `npm view surplus-cli version` and a clean `npm install --global surplus-cli` before announcing.

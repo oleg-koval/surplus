@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Check tag matches package version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version" >&2
+            exit 1
+          fi
+      - run: sudo apt-get update && sudo apt-get install --no-install-recommends -y zsh
+      - run: npm ci
+      - run: npm run ci
+      - run: npm run smoke:package
+      - name: Pack
+        id: pack
+        run: |
+          mkdir -p release
+          npm pack --pack-destination release
+          echo "tarball=$(command ls release/*.tgz)" >> "$GITHUB_OUTPUT"
+      # Uses npm trusted publishing (OIDC) when configured on npmjs.com;
+      # falls back to the NPM_TOKEN secret otherwise.
+      - name: Publish to npm
+        run: npm publish "${{ steps.pack.outputs.tarball }}" --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Create GitHub release
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.pack.outputs.tarball }}" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
