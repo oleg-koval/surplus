@@ -54,6 +54,15 @@ describe('reversible install', () => {
     });
   });
 
+  it('reports wrapper read failures during uninstall', async () => {
+    await withHome(async (home) => {
+      const codexWrapper = join(home, 'state/surplus/bin/codex');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(codexWrapper, { recursive: true }));
+
+      await expect(uninstallShell()).rejects.toMatchObject({ code: 'EISDIR' });
+    });
+  });
+
   it('chains and restores a preexisting Claude command statusline only while Surplus still owns it', async () => {
     await withHome(async (home) => {
       const settings = join(home, '.claude', 'settings.json');
@@ -70,6 +79,22 @@ describe('reversible install', () => {
       await uninstallClaudeStatusLine();
       const restored = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: unknown };
       expect(restored.statusLine).toEqual(original);
+    });
+  });
+
+  it('does not mistake ordinary statusline text for a Surplus capture command', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      const original = { type: 'command', command: 'echo capture claude' };
+      await writeFile(settings, JSON.stringify({ statusLine: original }));
+
+      await installClaudeStatusLine();
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toMatchObject({
+        statusLine: { command: statuslineCommand(original.command) },
+      });
+      await uninstallClaudeStatusLine();
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: original });
     });
   });
 

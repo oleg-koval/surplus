@@ -45,7 +45,9 @@ const writeAtomic = async (path: string, contents: string, requestedMode: number
   }
   if (linkInfo?.isSymbolicLink()) destination = await realpath(path);
   let mode = requestedMode;
-  try { mode = (await stat(destination)).mode & 0o777; } catch { /* Use the private default mode. */ }
+  try { mode = (await stat(destination)).mode & 0o777; } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   await mkdir(join(destination, '..'), { recursive: true, mode: 0o700 });
   const temporary = `${destination}.${randomUUID()}.tmp`;
   await writeFile(temporary, contents, { mode });
@@ -82,10 +84,16 @@ export const installShell = async (): Promise<void> => {
     }
     if (result !== source) await writeAtomic(rc, result, 0o600);
   } catch (error) {
+    const rollbackFailures: unknown[] = [];
     for (const path of created) {
       const provider = path.slice(path.lastIndexOf('/') + 1);
-      try { if (await readFile(path, 'utf8') === wrapper(provider)) await unlink(path); } catch { /* Preserve any file changed during rollback. */ }
+      try {
+        if (await readFile(path, 'utf8') === wrapper(provider)) await unlink(path);
+      } catch (rollbackError) {
+        if ((rollbackError as NodeJS.ErrnoException).code !== 'ENOENT') rollbackFailures.push(rollbackError);
+      }
     }
+    if (rollbackFailures.length > 0) throw new AggregateError([error, ...rollbackFailures], 'Shell install failed and wrapper rollback was incomplete.');
     throw error;
   }
 };
@@ -102,7 +110,15 @@ export const uninstallShell = async (): Promise<void> => {
   }
   for (const provider of ['claude', 'codex']) {
     const path = join(managedBin(), provider);
-    try { if (await readFile(path, 'utf8') === wrapper(provider)) await unlink(path); } catch { /* Keep user-edited or absent wrappers untouched. */ }
+    let contents: string;
+    try { contents = await readFile(path, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    if (contents !== wrapper(provider)) continue;
+    try { await unlink(path); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 };
 
@@ -126,6 +142,9 @@ const recoverOriginalStatuslineCommand = (command: string): { readonly recognize
   }
   return { recognized: true, originalCommand: decoded };
 };
+
+const isGeneratedCaptureCommand = (command: string): boolean =>
+  /^'(?:[^']|'\\'')+' '(?:[^']|'\\'')+' capture claude(?: --original=[A-Za-z0-9+/]+={0,2})?$/.test(command);
 
 export const installClaudeStatusLine = async (): Promise<boolean> => {
   const settingsPath = claudeSettingsPath();
@@ -166,7 +185,7 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   }
   const alreadyOwned = previous !== undefined && existingCommand === previous.managedCommand;
   const orphanedCommand = !alreadyOwned && existingCommand ? recoverOriginalStatuslineCommand(existingCommand) : undefined;
-  if (!alreadyOwned && existingCommand?.includes(' capture claude') && !orphanedCommand?.recognized) {
+  if (!alreadyOwned && existingCommand && isGeneratedCaptureCommand(existingCommand) && !orphanedCommand?.recognized) {
     throw new Error('A Surplus Claude statusline from another installation has no ownership backup; restore that backup or remove the old capture command before reinstalling.');
   }
   const originalCommand = alreadyOwned && previous
