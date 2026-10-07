@@ -105,6 +105,15 @@ describe('launch argument preservation', () => {
     expect(hasExplicitOverride('claude', [], { ANTHROPIC_BASE_URL: 'https://gateway.example' })).toBe(true);
   });
 
+  it('applies provider-specific model environment overrides only to that provider', () => {
+    expect(hasExplicitOverride('claude', [], { ANTHROPIC_MODEL: 'opus' })).toBe(true);
+    expect(hasExplicitOverride('codex', [], { ANTHROPIC_MODEL: 'opus' })).toBe(false);
+    expect(hasExplicitOverride('codex', [], { CODEX_MODEL: 'gpt' })).toBe(true);
+    expect(hasExplicitOverride('claude', [], { CODEX_MODEL: 'gpt' })).toBe(false);
+    expect(hasExplicitOverride('claude', [], { SURPLUS_MODEL: 'opus' })).toBe(true);
+    expect(hasExplicitOverride('codex', [], { SURPLUS_EFFORT: 'high' })).toBe(true);
+  });
+
   it('only enables automatic selection for a fully interactive terminal', () => {
     expect(shouldAutomaticallyRoute(true, true)).toBe(true);
     expect(shouldAutomaticallyRoute(false, true)).toBe(false);

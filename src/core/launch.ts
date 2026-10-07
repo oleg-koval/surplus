@@ -41,7 +41,8 @@ const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
 };
 
 export const hasExplicitOverride = (provider: Provider, args: readonly string[], env = process.env): boolean => {
-  if (env.SURPLUS_MODEL || env.SURPLUS_EFFORT || env.CODEX_MODEL || env.ANTHROPIC_MODEL) return true;
+  if (env.SURPLUS_MODEL || env.SURPLUS_EFFORT) return true;
+  if ((provider === 'claude' && env.ANTHROPIC_MODEL) || (provider === 'codex' && env.CODEX_MODEL)) return true;
   if (provider === 'claude' && (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_BASE_URL || env.CLAUDE_CODE_USE_BEDROCK || env.CLAUDE_CODE_USE_VERTEX || env.CLAUDE_CODE_USE_FOUNDRY || env.CLAUDE_CODE_EFFORT_LEVEL)) return true;
   const sentinel = args.indexOf('--');
   const cliArgs = sentinel < 0 ? args : args.slice(0, sentinel);
