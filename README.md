@@ -19,6 +19,8 @@ For a source install before the v0.1.0 release is published, use `npm install --
 
 Open a new terminal. Then use `claude` or `codex` as usual. Surplus installs small managed wrappers ahead of the original commands. It also chains Claude Code's existing command statusline so future usage readings are cached. Run `surplus uninstall` to restore the prior statusline and remove Surplus-owned shell entries and wrappers.
 
+Surplus honors Claude Code's `CLAUDE_CONFIG_DIR` when reading or updating `settings.json`. Its statusline backup is bound to that exact settings path, so use the same `CLAUDE_CONFIG_DIR` value when uninstalling; Surplus refuses to restore a backup into a different profile.
+
 The first Claude session after install only seeds its local reading after Claude returns rate-limit data. Surplus needs that reading before it can make an automatic choice. Codex usage is read live from Codex's local app-server.
 
 To install command wrappers without changing Claude's statusline, use `surplus install --no-claude-capture`. Claude automatic selection then remains unavailable until a captured sample exists.

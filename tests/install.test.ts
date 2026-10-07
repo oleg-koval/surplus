@@ -12,6 +12,7 @@ const withHome = async (run: (home: string) => Promise<void>): Promise<void> => 
   tempHomes.push(home);
   process.env.HOME = home;
   process.env.SHELL = '/bin/zsh';
+  delete process.env.CLAUDE_CONFIG_DIR;
   process.env.XDG_STATE_HOME = join(home, 'state');
   process.env.XDG_CONFIG_HOME = join(home, 'config');
   await run(home);
@@ -21,6 +22,7 @@ afterEach(async () => {
   for (const home of tempHomes.splice(0)) await rm(home, { recursive: true, force: true });
   delete process.env.XDG_STATE_HOME;
   delete process.env.XDG_CONFIG_HOME;
+  delete process.env.CLAUDE_CONFIG_DIR;
 });
 
 describe('reversible install', () => {
@@ -137,7 +139,9 @@ describe('reversible install', () => {
 
       await expect(main(['install'])).rejects.toThrow(/Refusing to overwrite/);
       expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: { type: 'command', command: statuslineCommand() } });
-      expect(JSON.parse(await readFile(backupPath, 'utf8'))).toEqual({ present: false, managedCommand: statuslineCommand() });
+      expect(JSON.parse(await readFile(backupPath, 'utf8'))).toEqual({
+        present: false, managedCommand: statuslineCommand(), settingsPath: settings,
+      });
       await uninstallClaudeStatusLine();
       expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({});
     });
@@ -156,9 +160,33 @@ describe('reversible install', () => {
         present: true,
         value: { type: 'command', command: original },
         managedCommand: statuslineCommand(original),
+        settingsPath: settings,
       });
       await uninstallClaudeStatusLine();
       expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: { type: 'command', command: original, padding: 8 } });
+    });
+  });
+
+  it('keeps the capture backup bound to the CLAUDE_CONFIG_DIR where it was installed', async () => {
+    await withHome(async (home) => {
+      const configDir = join(home, 'claude work profile');
+      const settings = join(configDir, 'settings.json');
+      const backupPath = join(home, 'state/surplus/claude-statusline-backup.json');
+      process.env.CLAUDE_CONFIG_DIR = configDir;
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(configDir, { recursive: true }));
+      const original = { type: 'command', command: 'echo original' };
+      await writeFile(settings, JSON.stringify({ statusLine: original }));
+
+      await installClaudeStatusLine();
+      expect(JSON.parse(await readFile(backupPath, 'utf8'))).toMatchObject({ settingsPath: settings });
+      process.env.CLAUDE_CONFIG_DIR = join(home, 'another profile');
+      await expect(installClaudeStatusLine()).rejects.toThrow(/different CLAUDE_CONFIG_DIR/);
+      await expect(uninstallClaudeStatusLine()).rejects.toThrow(/different CLAUDE_CONFIG_DIR/);
+      expect(JSON.parse(await readFile(settings, 'utf8'))).not.toEqual({ statusLine: original });
+
+      process.env.CLAUDE_CONFIG_DIR = configDir;
+      await uninstallClaudeStatusLine();
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: original });
     });
   });
 
@@ -308,6 +336,22 @@ describe('reversible install', () => {
 
       expect((await lstat(path)).isSymbolicLink()).toBe(true);
       expect(JSON.parse(await readFile(target, 'utf8'))).toEqual(defaultConfig);
+    });
+  });
+
+  it('keeps commands after an EOF managed block on their own line and remains idempotent', async () => {
+    await withHome(async (home) => {
+      const rc = join(home, '.zshrc');
+      const blockWithoutFinalNewline = '# >>> surplus managed block >>>\nexport PATH=/old/surplus:"$PATH"\n# <<< surplus managed block <<<';
+      await writeFile(rc, `${blockWithoutFinalNewline}echo user-command\n`);
+
+      await installShell();
+      const installed = await readFile(rc, 'utf8');
+      expect(installed).toContain('# <<< surplus managed block <<<\necho user-command\n');
+      await installShell();
+      expect(await readFile(rc, 'utf8')).toBe(installed);
+      await uninstallShell();
+      expect(await readFile(rc, 'utf8')).toBe('echo user-command\n');
     });
   });
 

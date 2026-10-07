@@ -1,7 +1,7 @@
 import { access, chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dataDir } from '../core/files.js';
@@ -10,7 +10,7 @@ const begin = '# >>> surplus managed block >>>';
 const end = '# <<< surplus managed block <<<';
 const managedBin = (): string => join(dataDir(), 'bin');
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
-const managedMarkers = (): string => `${begin}\nexport PATH=${shellQuote(managedBin())}:"$PATH"\n${end}`;
+const managedMarkers = (): string => `${begin}\nexport PATH=${shellQuote(managedBin())}:"$PATH"\n${end}\n`;
 const wrapper = (provider: string): string => `#!/bin/sh\nexec surplus run ${provider} "$@"\n`;
 
 const shellRc = (): string => {
@@ -31,8 +31,16 @@ const replaceManagedBlock = (source: string, replacement: string): string => {
   const finish = source.indexOf(end);
   if (start < 0 && finish < 0) return replacement ? `${source}${source.endsWith('\n') || !source ? '' : '\n'}${replacement}` : source;
   if (start < 0 || finish < start) throw new Error('The Surplus shell block is damaged; edit the shell file manually before continuing.');
-  const after = finish + end.length;
-  return `${source.slice(0, start)}${replacement}${source.slice(after)}`;
+  const markerEnd = finish + end.length;
+  const after = source[markerEnd] === '\n' ? markerEnd + 1 : markerEnd;
+  const beforeText = source.slice(0, start);
+  const afterText = source.slice(after);
+  if (replacement) {
+    const normalizedReplacement = replacement.endsWith('\n') || !afterText ? replacement : `${replacement}\n`;
+    return `${beforeText}${normalizedReplacement}${afterText}`;
+  }
+  const separator = afterText && beforeText && !beforeText.endsWith('\n') && !afterText.startsWith('\n') ? '\n' : '';
+  return `${beforeText}${separator}${afterText}`;
 };
 
 const writeAtomic = async (path: string, contents: string, requestedMode: number): Promise<void> => {
@@ -122,7 +130,8 @@ export const uninstallShell = async (): Promise<void> => {
   }
 };
 
-export const claudeSettingsPath = (): string => join(process.env.HOME ?? homedir(), '.claude', 'settings.json');
+const defaultClaudeSettingsPath = (): string => join(process.env.HOME ?? homedir(), '.claude', 'settings.json');
+export const claudeSettingsPath = (): string => join(process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : join(process.env.HOME ?? homedir(), '.claude'), 'settings.json');
 export const statuslineCommand = (originalCommand?: string): string => {
   const cli = `${shellQuote(process.execPath)} ${shellQuote(fileURLToPath(import.meta.url))} capture claude`;
   return originalCommand ? `${cli} --original=${Buffer.from(originalCommand).toString('base64')}` : cli;
@@ -163,7 +172,7 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   if (current !== undefined && (typeof current !== 'object' || current === null || Array.isArray(current) || (current as Record<string, unknown>).type !== 'command' || !existingCommand)) {
     throw new Error('Surplus can only chain a Claude command statusline; preserve other statusline types manually.');
   }
-  let previous: { readonly present: boolean; readonly value?: unknown; readonly managedCommand: string } | undefined;
+  let previous: { readonly present: boolean; readonly value?: unknown; readonly managedCommand: string; readonly settingsPath: string } | undefined;
   let previousBackupContents: string | undefined;
   try {
     previousBackupContents = await readFile(path, 'utf8');
@@ -173,13 +182,18 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
       throw new Error('Surplus Claude statusline backup is invalid; refusing to replace it.');
     }
     const row = saved as Record<string, unknown>;
-    if (typeof row.present !== 'boolean' || typeof row.managedCommand !== 'string') {
+    if (typeof row.present !== 'boolean' || typeof row.managedCommand !== 'string'
+      || (row.settingsPath !== undefined && (typeof row.settingsPath !== 'string' || row.settingsPath.length === 0))) {
       throw new Error('Surplus Claude statusline backup is invalid; refusing to replace it.');
     }
-    previous = { present: row.present, value: row.value, managedCommand: row.managedCommand };
+    const previousSettingsPath = typeof row.settingsPath === 'string' ? resolve(row.settingsPath) : defaultClaudeSettingsPath();
+    if (previousSettingsPath !== settingsPath) {
+      throw new Error('Surplus Claude statusline backup belongs to a different CLAUDE_CONFIG_DIR; use the original directory to reinstall or uninstall.');
+    }
+    previous = { present: row.present, value: row.value, managedCommand: row.managedCommand, settingsPath: previousSettingsPath };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      if (error instanceof Error && (error.message.includes('malformed') || error.message.includes('invalid'))) throw error;
+      if (error instanceof Error && (error.message.includes('malformed') || error.message.includes('invalid') || error.message.includes('different CLAUDE_CONFIG_DIR'))) throw error;
       throw new Error('Surplus Claude statusline backup is unreadable; refusing to replace it.');
     }
   }
@@ -199,13 +213,13 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   if (!alreadyOwned && orphanedCommand?.recognized && currentObject?.command === managedCommand) {
     const originalValue = orphanedCommand.originalCommand === undefined
       ? undefined : { type: 'command', command: orphanedCommand.originalCommand };
-    const recoveredOwnership = `${JSON.stringify({ present: originalValue !== undefined, ...(originalValue ? { value: originalValue } : {}), managedCommand: existingCommand }, null, 2)}\n`;
+    const recoveredOwnership = `${JSON.stringify({ present: originalValue !== undefined, ...(originalValue ? { value: originalValue } : {}), managedCommand: existingCommand, settingsPath }, null, 2)}\n`;
     await writeAtomic(path, recoveredOwnership, 0o600);
     return false;
   }
   const backup = alreadyOwned && previous
-    ? { present: previous.present, value: previous.value, managedCommand }
-    : { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand };
+    ? { present: previous.present, value: previous.value, managedCommand, settingsPath }
+    : { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand, settingsPath };
   const newBackupContents = `${JSON.stringify(backup, null, 2)}\n`;
   await writeAtomic(path, newBackupContents, 0o600);
   settings.statusLine = { ...(currentObject ?? {}), type: 'command', command: managedCommand };
@@ -238,10 +252,17 @@ export const uninstallClaudeStatusLine = async (): Promise<void> => {
   try { parsedBackup = JSON.parse(backupText) as unknown; } catch { throw new Error('Surplus Claude statusline backup is malformed; refusing to uninstall.'); }
   if (typeof parsedBackup !== 'object' || parsedBackup === null || Array.isArray(parsedBackup)
     || typeof (parsedBackup as Record<string, unknown>).present !== 'boolean'
-    || typeof (parsedBackup as Record<string, unknown>).managedCommand !== 'string') {
+    || typeof (parsedBackup as Record<string, unknown>).managedCommand !== 'string'
+    || ((parsedBackup as Record<string, unknown>).settingsPath !== undefined
+      && (typeof (parsedBackup as Record<string, unknown>).settingsPath !== 'string' || (parsedBackup as Record<string, unknown>).settingsPath === ''))) {
     throw new Error('Surplus Claude statusline backup is invalid; refusing to uninstall.');
   }
-  const backup = parsedBackup as { present: boolean; value?: unknown; managedCommand: string };
+  const backupRow = parsedBackup as { present: boolean; value?: unknown; managedCommand: string; settingsPath?: string };
+  const backupSettingsPath = backupRow.settingsPath ? resolve(backupRow.settingsPath) : defaultClaudeSettingsPath();
+  if (backupSettingsPath !== settingsPath) {
+    throw new Error('Surplus Claude statusline backup belongs to a different CLAUDE_CONFIG_DIR; use the original directory to uninstall.');
+  }
+  const backup = { present: backupRow.present, value: backupRow.value, managedCommand: backupRow.managedCommand };
   let settingsText: string;
   try { settingsText = await readFile(settingsPath, 'utf8'); } catch {
     throw new Error('Cannot read Claude settings.json; fix its permissions before uninstalling.');
