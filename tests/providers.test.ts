@@ -93,6 +93,29 @@ describe('Claude statusline telemetry', () => {
       await rm(fixture, { recursive: true, force: true });
     }
   });
+
+  it('skips an exact Claude wrapper from an old state root before reading identity', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-claude-stale-wrapper-'));
+    try {
+      const oldManagedBin = join(fixture, 'old-state', 'surplus', 'bin');
+      const providerBin = join(fixture, 'provider-bin');
+      const newHome = join(fixture, 'new-home');
+      await Promise.all([mkdir(oldManagedBin, { recursive: true }), mkdir(providerBin), mkdir(newHome)]);
+      const staleWrapper = join(oldManagedBin, 'claude');
+      const executable = join(providerBin, 'claude');
+      const identity = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', email: 'Fixture@Example.test', orgId: 'org-1', subscriptionType: 'pro' };
+      await writeFile(staleWrapper, '#!/bin/sh\nexec surplus run claude "$@"\n');
+      await chmod(staleWrapper, 0o755);
+      await writeFile(executable, `#!/bin/sh\nprintf '%s' '${JSON.stringify(identity)}'\n`);
+      await chmod(executable, 0o755);
+
+      const expected = createHash('sha256').update('fixture@example.test\norg-1\npro').digest('hex');
+      expect(readClaudeIdentityHash({ HOME: newHome, PATH: [oldManagedBin, providerBin].join(':') })).toBe(expected);
+      expect(readClaudeIdentityHash({ HOME: newHome, SURPLUS_CLAUDE_BIN: staleWrapper })).toBeUndefined();
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Codex window selection', () => {

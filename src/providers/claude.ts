@@ -2,8 +2,9 @@ import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { delimiter, join, resolve } from 'node:path';
-import { accessSync, constants, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
 import type { UsageSnapshot } from '../core/types.js';
+import { managedWrapperContents } from '../core/managed-wrapper.js';
 import { surplusDataDirectory } from '../core/xdg.js';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
@@ -39,13 +40,20 @@ export const readClaudeIdentityHash = (env = process.env): string | undefined =>
   const canonicalPath = (path: string): string => {
     try { return realpathSync(path); } catch { return resolve(path); }
   };
+  const isManagedWrapper = (path: string): boolean => {
+    try {
+      const details = statSync(path);
+      const contents = managedWrapperContents('claude');
+      return details.isFile() && details.size === Buffer.byteLength(contents) && readFileSync(path, 'utf8') === contents;
+    } catch { return false; }
+  };
   const managedExecutable = canonicalPath(join(wrapperDir, 'claude'));
-  if (configuredBin && canonicalPath(configuredBin) === managedExecutable) return undefined;
+  if (configuredBin && (canonicalPath(configuredBin) === managedExecutable || isManagedWrapper(configuredBin))) return undefined;
   const canonicalWrapperDir = canonicalPath(wrapperDir);
   const executable = configuredBin ?? (env.PATH === undefined ? [] : env.PATH.split(delimiter)).map((directory) => directory || '.').filter((directory) => canonicalPath(directory) !== canonicalWrapperDir).map((directory) => resolve(directory, 'claude')).find((path) => {
     try {
       if (!statSync(path).isFile()) return false;
-      if (canonicalPath(path) === managedExecutable) return false;
+      if (canonicalPath(path) === managedExecutable || isManagedWrapper(path)) return false;
       accessSync(path, constants.X_OK);
       return true;
     } catch { return false; }

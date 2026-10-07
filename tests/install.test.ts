@@ -307,6 +307,30 @@ describe('reversible install', () => {
     });
   });
 
+  it('removes known Bash integration when zsh is missing but reports unresolved custom ZDOTDIR', async () => {
+    await withHome(async (home) => {
+      const originalPath = process.env.PATH;
+      process.env.SHELL = '/bin/bash';
+      await writeFile(join(home, '.zshenv'), 'ZDOTDIR="$HOME/custom-zsh"\n');
+      try {
+        await installShell();
+        const pathWithoutZsh = join(home, 'path-without-zsh');
+        await mkdir(pathWithoutZsh);
+        process.env.PATH = pathWithoutZsh;
+
+        await expect(uninstallShell()).rejects.toThrow(/removed surplus from known shell startup files.*resolve the zsh startup directory/i);
+
+        expect(await readFile(join(home, '.bashrc'), 'utf8')).toBe('');
+        expect(await readFile(join(home, '.bash_profile'), 'utf8')).toBe('');
+        await expect(readFile(join(home, 'state/surplus/bin/claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(home, 'state/surplus/bin/codex'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      }
+    });
+  });
+
   it('rolls back the first Bash startup write when the login profile write fails', async () => {
     await withHome(async (home) => {
       process.env.SHELL = '/bin/bash';

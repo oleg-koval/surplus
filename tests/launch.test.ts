@@ -50,6 +50,27 @@ describe('provider executable lookup', () => {
     }
   });
 
+  it('skips exact managed wrappers left on PATH after the state root changes', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-stale-wrapper-'));
+    try {
+      const oldManagedBin = join(fixture, 'old-state', 'surplus', 'bin');
+      const providerBin = join(fixture, 'provider-bin');
+      const newHome = join(fixture, 'new-home');
+      await Promise.all([mkdir(oldManagedBin, { recursive: true }), mkdir(providerBin), mkdir(newHome)]);
+      const staleWrapper = join(oldManagedBin, 'codex');
+      const realProvider = join(providerBin, 'codex');
+      await writeFile(staleWrapper, '#!/bin/sh\nexec surplus run codex "$@"\n');
+      await chmod(staleWrapper, 0o755);
+      await writeFile(realProvider, '#!/bin/sh\nexit 0\n');
+      await chmod(realProvider, 0o755);
+
+      expect(await findExecutable('codex', { HOME: newHome, PATH: [oldManagedBin, providerBin].join(':') }, newHome)).toBe(realProvider);
+      await expect(findExecutable('codex', { HOME: newHome, SURPLUS_CODEX_BIN: staleWrapper }, newHome)).rejects.toThrow(/managed wrapper/);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('uses HOME-based managed wrapper lookup for empty and relative XDG_STATE_HOME', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'surplus-xdg-launch-'));
     const originalCwd = process.cwd();

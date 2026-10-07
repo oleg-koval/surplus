@@ -1,9 +1,10 @@
-import { access, realpath, stat } from 'node:fs/promises';
+import { access, readFile, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Provider } from './types.js';
+import { managedWrapperContents } from './managed-wrapper.js';
 import { resolveHomeDirectory, surplusDataDirectory } from './xdg.js';
 
 const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
@@ -86,8 +87,15 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
     try { return await realpath(path); } catch { return resolve(path); }
   };
   const managedExecutable = await canonicalPath(join(wrapperDir, name));
+  const isManagedWrapper = async (path: string): Promise<boolean> => {
+    try {
+      const details = await stat(path);
+      const contents = managedWrapperContents(name);
+      return details.isFile() && details.size === Buffer.byteLength(contents) && await readFile(path, 'utf8') === contents;
+    } catch { return false; }
+  };
   if (explicit) {
-    if (await canonicalPath(explicit) === managedExecutable) {
+    if (await canonicalPath(explicit) === managedExecutable || await isManagedWrapper(explicit)) {
       throw new Error(`SURPLUS_${name.toUpperCase()}_BIN points to Surplus's managed wrapper; set it to the original provider executable.`);
     }
     return explicit;
@@ -99,7 +107,7 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
     const path = resolve(pathDirectory, name);
     try {
       if (!(await stat(path)).isFile()) continue;
-      if (await canonicalPath(path) === managedExecutable) continue;
+      if (await canonicalPath(path) === managedExecutable || await isManagedWrapper(path)) continue;
       await access(path, constants.X_OK);
       return path;
     } catch { /* Search the next PATH directory. */ }

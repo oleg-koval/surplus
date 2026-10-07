@@ -5,6 +5,7 @@ import { constants, existsSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataDir } from '../core/files.js';
+import { managedWrapperContents } from '../core/managed-wrapper.js';
 import { resolveHomeDirectory } from '../core/xdg.js';
 
 const begin = '# >>> surplus managed block >>>';
@@ -12,7 +13,7 @@ const end = '# <<< surplus managed block <<<';
 const managedBin = (): string => join(dataDir(), 'bin');
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 const managedMarkers = (): string => `${begin}\nexport PATH=${shellQuote(managedBin())}:"$PATH"\n${end}\n`;
-const wrapper = (provider: string): string => `#!/bin/sh\nexec surplus run ${provider} "$@"\n`;
+const wrapper = managedWrapperContents;
 
 const zshStartupDirectory = (home: string): string => {
   if (process.env.ZDOTDIR !== undefined) {
@@ -75,17 +76,19 @@ const shellRcs = async (): Promise<readonly string[]> => {
   throw new Error('Surplus supports zsh and bash installation. Run `surplus run <provider>` directly for other shells.');
 };
 
-const shellRcCandidates = (): readonly string[] => {
+const shellRcCandidates = (): { readonly paths: readonly string[]; readonly zshResolutionFailed: boolean } => {
   const home = resolveHomeDirectory();
-  const zshDirectory = zshStartupDirectory(home);
-  const zshDirectories = [zshDirectory, home];
-  return [...new Set([
+  let zshDirectory: string | undefined;
+  let zshResolutionFailed = false;
+  try { zshDirectory = zshStartupDirectory(home); } catch { zshResolutionFailed = true; }
+  const zshDirectories = zshDirectory ? [zshDirectory, home] : [home];
+  return { paths: [...new Set([
     ...zshDirectories.map((directory) => join(directory, '.zshrc')),
     join(home, '.bashrc'),
     join(home, '.bash_profile'),
     join(home, '.bash_login'),
     join(home, '.profile'),
-  ])];
+  ])], zshResolutionFailed };
 };
 
 const replaceManagedBlock = (source: string, replacement: string): string => {
@@ -201,7 +204,8 @@ export const installShell = async (): Promise<void> => {
 };
 
 export const uninstallShell = async (): Promise<void> => {
-  for (const path of shellRcCandidates()) {
+  const candidates = shellRcCandidates();
+  for (const path of candidates.paths) {
     let rc: string;
     try { rc = await readFile(path, 'utf8'); } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
@@ -221,6 +225,9 @@ export const uninstallShell = async (): Promise<void> => {
     try { await unlink(path); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+  }
+  if (candidates.zshResolutionFailed) {
+    throw new Error('Removed Surplus from known shell startup files, but could not resolve the zsh startup directory. Inspect your custom ZDOTDIR startup file manually.');
   }
 };
 
