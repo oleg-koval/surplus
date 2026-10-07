@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">Surplus: Saved allowance. Stronger models.</title>
+  <desc id="desc">A local open-source tool for Claude Code and Codex CLI that uses included allowance before weekly reset.</desc>
+  <rect width="1200" height="630" fill="#f3f0e7"/>
+  <circle cx="1030" cy="106" r="245" fill="#e3e9d9"/>
+  <circle cx="1100" cy="580" r="270" fill="#e9e7dd"/>
+  <rect x="84" y="78" width="58" height="58" rx="17" fill="#a5ed75"/>
+  <text x="113" y="116" fill="#172720" font-family="Menlo,monospace" font-size="24" font-weight="bold" text-anchor="middle">S+</text>
+  <text x="160" y="118" fill="#172720" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="700" letter-spacing="-1">surplus</text>
+  <text x="84" y="275" fill="#172720" font-family="Inter,Arial,sans-serif" font-size="68" font-weight="760" letter-spacing="-4">Saved allowance.</text>
+  <text x="84" y="354" fill="#172720" font-family="Inter,Arial,sans-serif" font-size="68" font-weight="760" letter-spacing="-4">Stronger models.</text>
+  <text x="88" y="422" fill="#59685f" font-family="Inter,Arial,sans-serif" font-size="23">Automatic premium windows for Claude + Codex CLI.</text>
+  <rect x="88" y="486" width="320" height="56" rx="10" fill="#172720"/>
+  <text x="248" y="522" fill="#ffffff" font-family="Menlo,monospace" font-size="17" text-anchor="middle">MIT · OPEN SOURCE · LOCAL</text>
+  <g transform="translate(738 168) rotate(2)">
+    <rect width="378" height="283" rx="19" fill="#172720"/>
+    <rect x="0" y="0" width="378" height="48" rx="19" fill="#1c3027"/>
+    <circle cx="23" cy="24" r="5" fill="#e78569"/><circle cx="42" cy="24" r="5" fill="#e4bf66"/><circle cx="61" cy="24" r="5" fill="#a5ed75"/>
+    <text x="25" y="92" fill="#f2d78c" font-family="Menlo,monospace" font-size="14">$ surplus status</text>
+    <text x="25" y="137" fill="#a7b6a9" font-family="Menlo,monospace" font-size="13">weekly remaining</text>
+    <rect x="25" y="153" width="326" height="11" rx="6" fill="#39463f"/>
+    <rect x="25" y="153" width="130" height="11" rx="6" fill="#a5ed75"/>
+    <text x="25" y="196" fill="#a5ed75" font-family="Menlo,monospace" font-size="15">40% · reset in 24h</text>
+    <rect x="25" y="222" width="201" height="34" rx="7" fill="#25392e" stroke="#a5ed7560"/>
+    <text x="125" y="244" fill="#a5ed75" font-family="Menlo,monospace" font-size="12" text-anchor="middle">PREMIUM · OPUS</text>
+  </g>
+</svg>

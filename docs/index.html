@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f0e7">
+  <meta name="description" content="Surplus uses spare included Claude Code and Codex CLI allowance for stronger settings before your weekly reset.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="canonical" href="https://oleg-koval.github.io/surplus/">
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="./styles.css" as="style">
+  <link rel="stylesheet" href="./styles.css">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Surplus">
+  <meta property="og:title" content="Surplus — Better sessions. Before the reset.">
+  <meta property="og:description" content="Use spare included allowance for stronger Claude Code and Codex CLI sessions before reset.">
+  <meta property="og:url" content="https://oleg-koval.github.io/surplus/">
+  <meta property="og:image" content="https://oleg-koval.github.io/surplus/surplus-social-card.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Surplus — Better sessions. Before the reset.">
+  <meta name="twitter:description" content="A local, open-source policy for stronger Claude Code and Codex CLI sessions near reset.">
+  <meta name="twitter:image" content="https://oleg-koval.github.io/surplus/surplus-social-card.png">
+  <title>Surplus — Better sessions. Before the reset.</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="site-shell" id="top">
+    <header class="site-header wrap">
+      <a class="brand" href="#top" aria-label="Surplus home">
+        <span class="brand-mark" aria-hidden="true">S+</span><span>surplus</span>
+      </a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="#how">How it works</a>
+        <a href="#demo">Policy demo</a>
+        <a class="nav-source" href="https://github.com/oleg-koval/surplus/tree/main">Source <span aria-hidden="true">↗</span></a>
+      </nav>
+      <button class="theme-toggle" type="button" id="themeToggle" aria-label="Switch to dark mode" title="Switch color theme">
+        <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
+        <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 15.1A8.5 8.5 0 0 1 8.9 3.6 8.6 8.6 0 1 0 20.4 15.1Z"/></svg>
+      </button>
+    </header>
+
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">For Claude Code and Codex CLI</p>
+          <h1 id="hero-title">Better sessions.<br><span>Before the reset.</span></h1>
+          <p class="hero-summary">Use your included allowance for stronger settings when the week is almost over and the headroom is there.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/oleg-koval/surplus#install">Setup instructions <span aria-hidden="true">↗</span></a>
+            <a class="button button-quiet" href="#demo">Explore the policy</a>
+          </div>
+          <p class="hero-meta">MIT licensed <span aria-hidden="true">·</span> Runs locally <span aria-hidden="true">·</span> No model calls</p>
+        </div>
+
+        <figure class="terminal" aria-label="Illustrative Surplus status output with sample values">
+          <div class="terminal-bar">
+            <span class="terminal-label">surplus status claude</span><span class="terminal-window">sample</span>
+          </div>
+          <div class="terminal-content">
+            <div class="terminal-row terminal-muted"><span>weekly window</span><span>resets in 24h</span></div>
+            <div class="usage-track" aria-hidden="true"><span></span></div>
+            <div class="terminal-row"><span class="terminal-strong">40% remaining</span><span>7 day window</span></div>
+            <div class="terminal-rule"></div>
+            <div class="terminal-row terminal-muted"><span>5-hour window</span><span>fresh data</span></div>
+            <div class="terminal-row"><span class="terminal-strong">80% remaining</span><span>included usage</span></div>
+            <div class="terminal-result"><span class="result-check" aria-hidden="true">✓</span><span>Next session <b>opus</b></span><span class="result-state">READY</span></div>
+          </div>
+          <figcaption>Illustrative output. Surplus evaluates provider usage on your device.</figcaption>
+        </figure>
+      </section>
+
+      <section class="proof-strip" aria-label="Product principles">
+        <div class="wrap proof-inner">
+          <span>Local usage checks</span>
+          <span>Normal settings on uncertainty</span>
+          <span>No CLI usage telemetry</span>
+        </div>
+      </section>
+
+      <section class="section wrap how-section" id="how" aria-labelledby="how-title">
+        <div class="section-heading">
+          <p class="eyebrow">A small local decision</p>
+          <h2 id="how-title">One check before a new session.</h2>
+          <p class="section-intro">Surplus reads the usage window the provider exposes, checks your reserve and reset time, then decides whether to apply your stronger settings.</p>
+        </div>
+        <ol class="steps">
+          <li>
+            <span class="step-number">01</span>
+            <div><h3>Read what the provider reports</h3><p>Usage and policy state stay on your device. Surplus checks reported allowance, reset time and included-usage permission locally at launch and makes no model call to measure them.</p></div>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <div><h3>Apply your policy</h3><p>In the last 48 hours, a fresh weekly window needs at least 25% left. A reported five-hour window also needs 25% headroom.</p></div>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <div><h3>Keep your normal choices</h3><p>Missing or stale data, explicit model choices and non-interactive sessions keep the provider's usual settings.</p></div>
+          </li>
+        </ol>
+        <p class="policy-note"><span class="note-mark" aria-hidden="true">i</span><span>A 5% reserve and 5% expected-use budget are part of the weekly check. These are routing thresholds, not a cap on a running session. Surplus cannot promise a model-specific quota or prevent paid overage.</span></p>
+      </section>
+
+      <section class="demo-section" id="demo" aria-labelledby="demo-title">
+        <div class="wrap">
+          <div class="section-heading demo-heading">
+            <p class="eyebrow">Try sample values</p>
+            <h2 id="demo-title">Would Surplus upgrade?</h2>
+            <p class="section-intro">Move the controls to see which policy check decides the result. The demo uses sample data and never contacts a provider.</p>
+          </div>
+          <div class="demo-layout">
+            <div class="demo-controls">
+              <div class="presets" role="group" aria-label="Load a demo scenario">
+                <span class="presets-label">Try a scenario</span>
+                <button type="button" class="preset-button" data-preset="room" aria-pressed="false">Room before reset</button>
+                <button type="button" class="preset-button" data-preset="reserve" aria-pressed="false">Protect the reserve</button>
+                <button type="button" class="preset-button" data-preset="days" aria-pressed="false">Reset is days away</button>
+              </div>
+
+              <div class="range-control">
+                <div class="control-heading"><label for="weekly">Weekly allowance remaining</label><output id="weeklyOut" for="weekly">40%</output></div>
+                <input id="weekly" type="range" min="0" max="100" value="40" aria-describedby="weeklyHelp">
+                <p class="control-help" id="weeklyHelp">Needs 25% or more, including the configured reserve and expected-use budget.</p>
+              </div>
+              <div class="range-control" id="sessionControl">
+                <div class="control-heading"><label for="session">Five-hour allowance remaining</label><output id="sessionOut" for="session">80%</output></div>
+                <input id="session" type="range" min="0" max="100" value="80" aria-describedby="sessionHelp">
+                <p class="control-help" id="sessionHelp">When reported, this window needs at least 25% headroom.</p>
+              </div>
+              <div class="range-control">
+                <div class="control-heading"><label for="hours">Hours until weekly reset</label><output id="hoursOut" for="hours">24h</output></div>
+                <input id="hours" type="range" min="0" max="168" value="24" aria-describedby="hoursHelp">
+                <p class="control-help" id="hoursHelp">The premium window opens in the final 48 hours.</p>
+              </div>
+
+              <fieldset class="checks">
+                <legend>Provider data</legend>
+                <label class="check-row" for="weeklyOnly"><span><b>Weekly window only</b><small>Codex can report one weekly window without a five-hour window.</small></span><input id="weeklyOnly" type="checkbox"><span class="switch" aria-hidden="true"></span></label>
+                <label class="check-row" for="allowed"><span><b>Included usage is allowed</b><small>The provider confirms this usage is included.</small></span><input id="allowed" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
+                <label class="check-row" for="fresh"><span><b>Usage data is fresh</b><small>Stale or malformed readings keep your normal settings.</small></span><input id="fresh" type="checkbox" checked><span class="switch" aria-hidden="true"></span></label>
+              </fieldset>
+            </div>
+
+            <aside class="result-panel" aria-labelledby="resultTitle">
+              <div class="result-top"><span class="result-kicker">Sample policy result</span><span class="result-dot" id="resultDot" aria-hidden="true"></span></div>
+              <h3 id="resultTitle">Premium window</h3>
+              <p id="resultText">Weekly and five-hour headroom are available close to reset. Your configured choice can apply at the next new session.</p>
+              <div class="result-divider"></div>
+              <div class="result-detail"><span>Decision</span><b class="status-pill" id="resultPill">UPGRADE ELIGIBLE</b></div>
+              <p class="result-footnote">This is an explanation of the default policy, not a live usage reading or a promise of model-specific quota.</p>
+              <p class="sr-only" id="demoAnnouncement" role="status" aria-live="polite"></p>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="install-section wrap" id="install" aria-labelledby="install-title">
+        <div class="install-copy">
+          <p class="eyebrow">Open source · MIT</p>
+          <h2 id="install-title">Start with the source.</h2>
+          <p>Setup instructions and release downloads are in the repository. Check the requirements before installing.</p>
+          <a class="button button-primary" href="https://github.com/oleg-koval/surplus#install">Read setup instructions <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="install-aside">
+          <span class="install-tag">OPEN SOURCE</span>
+          <strong>Open-source preview</strong>
+          <p>Node.js 22.21+ or 24.10+<br>Claude Code and/or Codex CLI<br>zsh or bash</p>
+          <a href="https://github.com/oleg-koval/surplus/tree/main">View repository files <span aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer wrap">
+      <a class="footer-brand" href="#top"><span class="brand-mark" aria-hidden="true">S+</span><span>surplus</span></a>
+      <p>MIT licensed. No CLI usage telemetry. Billing settings stay unchanged.</p>
+      <div class="footer-links"><a href="https://github.com/oleg-koval/surplus">GitHub</a><a href="https://github.com/oleg-koval/surplus/issues">Issues</a><a href="#top">Back to top ↑</a></div>
+    </footer>
+  </div>
+  <script src="./site.js" defer></script>
+</body>
+</html>

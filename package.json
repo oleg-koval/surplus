@@ -1,0 +1,38 @@
+{
+  "name": "surplus-cli",
+  "version": "0.1.0",
+  "description": "Use more of your included AI coding allowance before it resets.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.21.0 || >=24.10.0"
+  },
+  "bin": {
+    "surplus": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests",
+    "test": "vitest run",
+    "demo": "node dist/cli.js demo",
+    "surplus": "node dist/cli.js",
+    "smoke:package": "npm run build && node scripts/package-smoke.mjs",
+    "prepare": "npm run build",
+    "ci": "npm run typecheck && npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.26.0",
+    "@types/node": "^22.15.0",
+    "eslint": "^9.26.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.31.1",
+    "vitest": "^4.1.11"
+  }
+}
