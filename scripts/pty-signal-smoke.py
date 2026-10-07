@@ -189,8 +189,6 @@ def no_codex_effort_downgrade(surplus: str, provider: str) -> None:
                 state = json.load(state_file)
             if state.get("tier") != "default":
                 raise RuntimeError(f"unsafe effort upgrade persisted non-default state: {state}")
-            if os.path.exists(os.path.join(state_dir, "activations.json")):
-                raise RuntimeError("a disabled Codex effort upgrade incremented premium activation count")
         finally:
             os.close(terminal)
 

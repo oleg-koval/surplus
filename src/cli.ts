@@ -4,7 +4,7 @@ import { constants as osConstants } from 'node:os';
 import type { Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { defaultConfig, incrementActivations, readActivations, readClaudeIdentity, readConfig, readState, readUsage, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
+import { defaultConfig, readClaudeIdentity, readConfig, readState, readUsage, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
 import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldAutomaticallyRoute } from './core/launch.js';
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from './install/shell.js';
 import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } from './providers/claude.js';
@@ -162,9 +162,6 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
     if (provider === 'codex' && result.usage) {
       try { await saveUsage(result.usage); } catch { /* Cached telemetry never controls provider launch or exit status. */ }
     }
-    if (result.decision.tier === 'premium') {
-      try { await incrementActivations(); } catch { /* The local counter never controls provider launch or exit status. */ }
-    }
   };
   process.exitCode = await launchProvider(provider, selected, childEnv, onStarted);
 };
@@ -172,8 +169,6 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
 const status = async (provider: Provider): Promise<void> => {
   const result = await prepare(provider);
   showDecision(result.decision);
-  const activations = await readActivations();
-  if (activations?.count) process.stdout.write(`Local Surplus premium launch attempts: ${String(activations.count)} (stored on this device only)\n`);
 };
 
 const configure = async (provider: Provider, args: string[]): Promise<void> => {

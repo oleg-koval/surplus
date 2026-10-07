@@ -42,7 +42,7 @@ export const readClaudeIdentityHash = (env = process.env): string | undefined =>
   const managedExecutable = canonicalPath(join(wrapperDir, 'claude'));
   if (configuredBin && canonicalPath(configuredBin) === managedExecutable) return undefined;
   const canonicalWrapperDir = canonicalPath(wrapperDir);
-  const executable = configuredBin ?? (env.PATH ?? '').split(delimiter).filter((directory) => directory && canonicalPath(directory) !== canonicalWrapperDir).map((directory) => join(directory, 'claude')).find((path) => {
+  const executable = configuredBin ?? (env.PATH === undefined ? [] : env.PATH.split(delimiter)).map((directory) => directory || '.').filter((directory) => canonicalPath(directory) !== canonicalWrapperDir).map((directory) => resolve(directory, 'claude')).find((path) => {
     try {
       if (!statSync(path).isFile()) return false;
       if (canonicalPath(path) === managedExecutable) return false;

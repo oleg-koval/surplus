@@ -402,9 +402,8 @@ export const uninstallClaudeStatusLine = async (): Promise<void> => {
 };
 
 export const surplusExecutable = async (env = process.env): Promise<string | undefined> => {
-  for (const directory of (env.PATH ?? '').split(delimiter)) {
-    if (!directory) continue;
-    const path = join(directory, 'surplus');
+  for (const directory of env.PATH === undefined ? [] : env.PATH.split(delimiter)) {
+    const path = resolve(directory || '.', 'surplus');
     try {
       if (!(await stat(path)).isFile()) continue;
       await access(path, constants.X_OK);

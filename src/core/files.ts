@@ -9,7 +9,6 @@ export const configPath = (): string => join(xdgDirectory('config'), 'surplus', 
 const usagePath = (provider: Provider): string => join(dataDir(), `${provider}-usage.json`);
 const statePath = (provider: Provider): string => join(dataDir(), `${provider}-state.json`);
 const claudeIdentityPath = (): string => join(dataDir(), 'claude-identity.json');
-const activationPath = (): string => join(dataDir(), 'activations.json');
 
 const readJson = async <T>(path: string): Promise<T | undefined> => {
   try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch { return undefined; }
@@ -72,12 +71,6 @@ export const readState = (provider: Provider): Promise<ProviderState | undefined
 export const saveState = (provider: Provider, state: ProviderState): Promise<void> => atomicJson(statePath(provider), state);
 export const readClaudeIdentity = async (): Promise<string | undefined> => (await readJson<{ identityHash?: string }>(claudeIdentityPath()))?.identityHash;
 export const saveClaudeIdentity = (identityHash: string | undefined): Promise<void> => atomicJson(claudeIdentityPath(), { identityHash });
-export const incrementActivations = async (): Promise<void> => {
-  const record = await readJson<{ count?: number }>(activationPath());
-  await atomicJson(activationPath(), { count: (typeof record?.count === 'number' ? record.count : 0) + 1, lastLaunchAt: new Date().toISOString() });
-};
-export const readActivations = (): Promise<{ count?: number; lastLaunchAt?: string } | undefined> => readJson(activationPath());
-
 export const defaultConfig: SurplusConfig = {
   version: 1,
   providers: {

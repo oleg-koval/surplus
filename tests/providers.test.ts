@@ -59,6 +59,40 @@ describe('Claude statusline telemetry', () => {
       await rm(fixture, { recursive: true, force: true });
     }
   });
+
+  it('resolves Claude from leading, repeated, and trailing empty PATH components', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-claude-empty-path-'));
+    const originalCwd = process.cwd();
+    try {
+      const identity = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', email: 'Fixture@Example.test', orgId: 'org-1', subscriptionType: 'pro' };
+      const executable = join(fixture, 'claude');
+      await writeFile(executable, `#!/bin/sh\nprintf '%s' '${JSON.stringify(identity)}'\n`);
+      await chmod(executable, 0o755);
+      process.chdir(fixture);
+      const expected = createHash('sha256').update('fixture@example.test\norg-1\npro').digest('hex');
+      for (const PATH of [`:${join(fixture, 'missing')}`, `${join(fixture, 'missing')}::${join(fixture, 'other')}`, `${join(fixture, 'missing')}:`]) {
+        expect(readClaudeIdentityHash({ HOME: fixture, PATH })).toBe(expected);
+      }
+    } finally {
+      process.chdir(originalCwd);
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('does not search the current directory when PATH is unset', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-claude-unset-path-'));
+    const originalCwd = process.cwd();
+    try {
+      const executable = join(fixture, 'claude');
+      await writeFile(executable, '#!/bin/sh\nprintf \'%s\' \'{"loggedIn":true}\'\n');
+      await chmod(executable, 0o755);
+      process.chdir(fixture);
+      expect(readClaudeIdentityHash({ HOME: fixture })).toBeUndefined();
+    } finally {
+      process.chdir(originalCwd);
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Codex window selection', () => {

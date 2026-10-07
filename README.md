@@ -46,7 +46,7 @@ surplus demo                          # deterministic sample, no account access
 surplus uninstall
 ```
 
-Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, account identity hashes, policy state, and a premium-launch attempt count live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
+Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, account identity hashes, and policy state live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
 
 ## Important limits
 

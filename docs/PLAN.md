@@ -20,7 +20,7 @@ Use available included coding-assistant allowance before a weekly reset by selec
 2. Codex CLI: use the local app-server `account/read`, `account/rateLimits/read`, `config/read`, and paginated `model/list` protocol. Match reasoning support to the effective configured model. Do not use model migration recommendations as quality rankings.
 3. Launch routing: shell wrappers intercept ordinary interactive `claude` and `codex` commands. Explicit choices, resume/background/cloud modes, and machine output bypass selection.
 4. Safety: validated config, atomic private files, conservative fallbacks, reversible statusline/shell setup, and isolated-home installer coverage.
-5. Adoption: GitHub-first installation, a self-contained sample-data explainer, no default telemetry, and a local premium launch-attempt counter with voluntary reporting.
+5. Adoption: GitHub-first installation, a self-contained sample-data explainer, no default telemetry, and voluntary user-reported feedback.
 
 ## Delivery gates
 

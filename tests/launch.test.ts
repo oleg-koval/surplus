@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendEffort, appendModel, findExecutable, hasExplicitOverride, shouldAutomaticallyRoute } from '../src/core/launch.js';
@@ -76,6 +76,39 @@ describe('provider executable lookup', () => {
       await expect(findExecutable('codex', {
         HOME: '', XDG_STATE_HOME: join(fixture, 'valid-xdg'), PATH: [managedBin, providerBin].join(':'),
       })).rejects.toThrow(/HOME must be a non-empty absolute path/);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('searches empty PATH components as the current directory', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-empty-path-'));
+    const originalCwd = process.cwd();
+    try {
+      const provider = join(fixture, 'codex');
+      await writeFile(provider, '#!/bin/sh\nexit 0\n');
+      await chmod(provider, 0o755);
+      process.chdir(fixture);
+      const expected = join(await realpath(fixture), 'codex');
+      for (const path of [`:${join(fixture, 'missing')}`, `${join(fixture, 'missing')}::${join(fixture, 'other')}`, `${join(fixture, 'missing')}:`]) {
+        expect(await findExecutable('codex', { HOME: fixture, PATH: path }, fixture)).toBe(expected);
+      }
+    } finally {
+      process.chdir(originalCwd);
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('does not treat an unset PATH as an empty PATH component', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-unset-path-'));
+    const originalCwd = process.cwd();
+    try {
+      const provider = join(fixture, 'codex');
+      await writeFile(provider, '#!/bin/sh\nexit 0\n');
+      await chmod(provider, 0o755);
+      process.chdir(fixture);
+      expect(await findExecutable('codex', { HOME: fixture }, fixture)).toBeUndefined();
     } finally {
       process.chdir(originalCwd);
       await rm(fixture, { recursive: true, force: true });

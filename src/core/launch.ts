@@ -93,9 +93,10 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
     return explicit;
   }
   const canonicalWrapperDir = await canonicalPath(wrapperDir);
-  for (const directory of (env.PATH ?? '').split(delimiter)) {
-    if (!directory || await canonicalPath(directory) === canonicalWrapperDir) continue;
-    const path = join(directory, name);
+  for (const directory of env.PATH === undefined ? [] : env.PATH.split(delimiter)) {
+    const pathDirectory = directory || '.';
+    if (await canonicalPath(pathDirectory) === canonicalWrapperDir) continue;
+    const path = resolve(pathDirectory, name);
     try {
       if (!(await stat(path)).isFile()) continue;
       if (await canonicalPath(path) === managedExecutable) continue;

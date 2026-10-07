@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -133,6 +133,39 @@ describe('reversible install', () => {
       await chmod(executable, 0o755);
 
       expect(await surplusExecutable({ PATH: [directoryBin, providerBin].join(':') })).toBe(executable);
+    });
+  });
+
+  it('finds the Surplus executable in empty PATH components', async () => {
+    await withHome(async (home) => {
+      const surplus = join(home, 'surplus');
+      await writeFile(surplus, '#!/bin/sh\nexit 0\n');
+      await chmod(surplus, 0o755);
+      const originalCwd = process.cwd();
+      try {
+        process.chdir(home);
+        const expected = join(await realpath(home), 'surplus');
+        for (const PATH of [':/missing', '/missing::/other', '/missing:']) {
+          expect(await surplusExecutable({ PATH })).toBe(expected);
+        }
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+  });
+
+  it('does not search the current directory when PATH is unset', async () => {
+    await withHome(async (home) => {
+      const surplus = join(home, 'surplus');
+      await writeFile(surplus, '#!/bin/sh\nexit 0\n');
+      await chmod(surplus, 0o755);
+      const originalCwd = process.cwd();
+      try {
+        process.chdir(home);
+        expect(await surplusExecutable({})).toBeUndefined();
+      } finally {
+        process.chdir(originalCwd);
+      }
     });
   });
 
