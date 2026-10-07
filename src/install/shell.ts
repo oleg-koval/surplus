@@ -2,7 +2,7 @@ import { access, chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, 
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataDir } from '../core/files.js';
 import { resolveHomeDirectory } from '../core/xdg.js';
@@ -16,7 +16,9 @@ const wrapper = (provider: string): string => `#!/bin/sh\nexec surplus run ${pro
 
 const zshStartupDirectory = (home: string): string => {
   if (process.env.ZDOTDIR !== undefined) {
-    if (!process.env.ZDOTDIR) throw new Error('ZDOTDIR is empty; set it to a startup directory before installing or uninstalling.');
+    if (!process.env.ZDOTDIR || !isAbsolute(process.env.ZDOTDIR)) {
+      throw new Error('ZDOTDIR must be a non-empty absolute path before installing or uninstalling.');
+    }
     return process.env.ZDOTDIR;
   }
   const shell = process.env.SHELL ?? '';
@@ -44,7 +46,9 @@ const zshStartupDirectory = (home: string): string => {
   const valueBoundary = details.indexOf(valueMarker);
   const isSet = valueBoundary >= 0 ? details.slice(0, valueBoundary) : '';
   const configured = valueBoundary >= 0 ? details.slice(valueBoundary + valueMarker.length) : '';
-  if (isSet === '1' && !configured) throw new Error('ZDOTDIR is empty; set it to a startup directory before installing or uninstalling.');
+  if (isSet === '1' && (!configured || !isAbsolute(configured))) {
+    throw new Error('ZDOTDIR must be a non-empty absolute path before installing or uninstalling.');
+  }
   if (isSet !== '0' && isSet !== '1') throw new Error('Could not safely resolve zsh ZDOTDIR output; set ZDOTDIR in the environment and retry.');
   return configured || home;
 };
@@ -125,11 +129,17 @@ export const installShell = async (): Promise<void> => {
   const bin = managedBin();
   const rcs = await shellRcs();
   const wrappersToCreate: string[] = [];
+  const wrappersToRepair: { readonly path: string; readonly mode: number }[] = [];
   for (const provider of ['claude', 'codex']) {
     const path = join(bin, provider);
     try {
       const current = await readFile(path, 'utf8');
       if (current !== wrapper(provider)) throw new Error(`Refusing to overwrite an existing ${path}.`);
+      const mode = (await stat(path)).mode & 0o777;
+      try { await access(path, constants.X_OK); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EACCES') throw error;
+        wrappersToRepair.push({ path, mode });
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       wrappersToCreate.push(path);
@@ -146,6 +156,7 @@ export const installShell = async (): Promise<void> => {
   await mkdir(bin, { recursive: true, mode: 0o700 });
   const created: string[] = [];
   const writtenRcs: typeof rcChanges[number][] = [];
+  const repairedModes: typeof wrappersToRepair[number][] = [];
   try {
     for (const path of wrappersToCreate) {
       const provider = path.slice(path.lastIndexOf('/') + 1);
@@ -157,8 +168,17 @@ export const installShell = async (): Promise<void> => {
       await writeAtomic(change.path, change.result, 0o600);
       writtenRcs.push(change);
     }
+    for (const fix of wrappersToRepair) {
+      repairedModes.push(fix);
+      await chmod(fix.path, fix.mode | 0o111);
+    }
   } catch (error) {
     const rollbackFailures: unknown[] = [];
+    for (const fix of repairedModes.reverse()) {
+      try { await chmod(fix.path, fix.mode); } catch (rollbackError) {
+        if ((rollbackError as NodeJS.ErrnoException).code !== 'ENOENT') rollbackFailures.push(rollbackError);
+      }
+    }
     for (const change of writtenRcs.reverse()) {
       try {
         if (change.source !== undefined) await writeAtomic(change.path, change.source, 0o600);

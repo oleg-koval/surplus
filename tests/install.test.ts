@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,6 +74,52 @@ describe('reversible install', () => {
         await expect(readFile(join(stateHome, 'surplus', 'bin', 'claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(join(home, '.zshrc'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       }
+    });
+  });
+
+  it('rejects relative ZDOTDIR values before editing startup files', async () => {
+    await withHome(async (home) => {
+      const customDir = join(home, 'relative-zsh');
+      await mkdir(customDir);
+      process.env.ZDOTDIR = 'relative-zsh';
+      await expect(installShell()).rejects.toThrow(/ZDOTDIR must be a non-empty absolute path/);
+      await expect(readFile(join(home, '.zshrc'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(home, 'state', 'surplus', 'bin', 'claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+      delete process.env.ZDOTDIR;
+      await writeFile(join(home, '.zshenv'), 'ZDOTDIR="relative-zsh"\n');
+      await expect(installShell()).rejects.toThrow(/ZDOTDIR must be a non-empty absolute path/);
+      await expect(readFile(join(customDir, '.zshrc'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(home, 'state', 'surplus', 'bin', 'claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('repairs missing execute permission only on exact Surplus wrappers', async () => {
+    await withHome(async (home) => {
+      const codexWrapper = join(home, 'state', 'surplus', 'bin', 'codex');
+      const commandBin = join(home, 'command-bin');
+      const argsPath = join(home, 'wrapper-args');
+      await installShell();
+      await chmod(codexWrapper, 0o641);
+
+      await installShell();
+
+      expect((await stat(codexWrapper)).mode & 0o100).not.toBe(0);
+      await mkdir(commandBin);
+      const fakeSurplus = join(commandBin, 'surplus');
+      await writeFile(fakeSurplus, '#!/bin/sh\nprintf "%s\\n" "$@" > "$SURPLUS_WRAPPER_ARGS"\n');
+      await chmod(fakeSurplus, 0o755);
+      const launched = spawnSync(codexWrapper, ['--model', 'fixture'], {
+        encoding: 'utf8', env: { HOME: home, PATH: commandBin, SURPLUS_WRAPPER_ARGS: argsPath },
+      });
+      expect(launched.status).toBe(0);
+      expect(await readFile(argsPath, 'utf8')).toBe('run\ncodex\n--model\nfixture\n');
+
+      await writeFile(codexWrapper, '#!/bin/sh\n# user-owned\n');
+      const editedMode = (await stat(codexWrapper)).mode & 0o777;
+      await expect(installShell()).rejects.toThrow(/Refusing to overwrite/);
+      expect(await readFile(codexWrapper, 'utf8')).toBe('#!/bin/sh\n# user-owned\n');
+      expect((await stat(codexWrapper)).mode & 0o777).toBe(editedMode);
     });
   });
 
