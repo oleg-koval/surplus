@@ -33,10 +33,10 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      # npm trusted publishing (OIDC); no NPM_TOKEN needed.
       id-token: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       NPM_CONFIG_PROVENANCE: 'true'
     steps:
       - uses: actions/checkout@v4
@@ -46,12 +46,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Check npm token
-        run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "NPM_TOKEN secret is not set" >&2
-            exit 1
-          fi
       - run: npm ci
       - run: npm run release:dry-run
       - run: npm run semantic-release
