@@ -24,8 +24,9 @@ try {
   await mkdir(join(home, '.claude'));
   const priorStatusLine = { type: 'command', command: "printf 'original statusline'", padding: 4 };
   await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ theme: 'dark', statusLine: priorStatusLine }));
+  const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   run('npm', ['pack', '--pack-destination', packDir], { cwd: root });
-  const tarball = join(packDir, 'surplus-cli-0.1.0.tgz');
+  const tarball = join(packDir, `surplus-cli-${version}.tgz`);
   run('npm', ['install', '--prefix', prefix, '--no-save', tarball], { cwd: root });
   const surplus = join(prefix, 'node_modules', '.bin', 'surplus');
   const env = {
