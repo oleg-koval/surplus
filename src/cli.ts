@@ -4,7 +4,7 @@ import type { Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
 import { defaultConfig, incrementActivations, readActivations, readClaudeIdentity, readConfig, readState, readUsage, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
-import { appendEffort, appendModel, hasExplicitOverride, launchProvider } from './core/launch.js';
+import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldAutomaticallyRoute } from './core/launch.js';
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from './install/shell.js';
 import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } from './providers/claude.js';
 import { discoverCodex } from './providers/codex.js';
@@ -102,6 +102,10 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
 };
 
 const run = async (provider: Provider, args: string[]): Promise<void> => {
+  if (!shouldAutomaticallyRoute(process.stdin.isTTY, process.stdout.isTTY)) {
+    process.exitCode = await launchProvider(provider, args);
+    return;
+  }
   if (hasExplicitOverride(provider, args)) {
     process.exitCode = await launchProvider(provider, args);
     return;
@@ -157,7 +161,7 @@ const configure = async (provider: Provider, args: string[]): Promise<void> => {
 const demo = (): void => {
   const now = new Date('2026-10-07T12:00:00.000Z');
   const sample: UsageSnapshot = {
-    provider: 'claude', observedAt: now.toISOString(), weeklyUsedPercent: 60,
+    provider: 'claude', observedAt: now.toISOString(), weeklyUsedPercent: 60, sessionWindow: 'available',
     resetsAt: new Date(now.getTime() + 24 * 60 * 60_000).toISOString(),
     sessionUsedPercent: 20, sessionResetsAt: new Date(now.getTime() + 4 * 60 * 60_000).toISOString(), usageAllowed: true,
   };

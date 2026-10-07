@@ -93,10 +93,20 @@ const pickWindow = (snapshot: unknown, minMins: number, maxMins: number): Window
   .filter((window) => isNumber(window.windowDurationMins) && window.windowDurationMins >= minMins && window.windowDurationMins <= maxMins)
   .sort((left, right) => Number(right.windowDurationMins) - Number(left.windowDurationMins))[0];
 
-export const codexWindows = (snapshot: unknown): { readonly weekly?: Window; readonly session?: Window } => {
+export const codexWindows = (snapshot: unknown): { readonly weekly?: Window; readonly session?: Window; readonly sessionWindow: 'available' | 'absent' | 'invalid' } => {
   const weekly = pickWindow(snapshot, 6 * 24 * 60, 8 * 24 * 60);
   const session = pickWindow(snapshot, 4 * 60, 6 * 60);
-  return { ...(weekly ? { weekly } : {}), ...(session ? { session } : {}) };
+  const existing = isRecord(snapshot) ? [snapshot.primary, snapshot.secondary].filter((value) => value !== null && value !== undefined) : [];
+  const absent = Boolean(weekly && !session && existing.length === 1);
+  return { ...(weekly ? { weekly } : {}), ...(session ? { session } : {}), sessionWindow: session ? 'available' : absent ? 'absent' : 'invalid' };
+};
+
+export const codexLimitSnapshot = (limits: unknown): unknown => {
+  if (!isRecord(limits)) return undefined;
+  if (isRecord(limits.rateLimitsByLimitId)) return limits.rateLimitsByLimitId.codex;
+  const legacy = limits.rateLimits;
+  if (!isRecord(legacy)) return undefined;
+  return legacy.limitId === undefined || legacy.limitId === null || legacy.limitId === 'codex' ? legacy : undefined;
 };
 
 const modelPage = (value: unknown): { readonly models: readonly Model[]; readonly nextCursor?: string } => {
@@ -118,22 +128,23 @@ export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | 
     if (!isRecord(account) || !isRecord(account.account) || account.account.type !== 'chatgpt') { debug('Codex account/read did not report a ChatGPT account.'); return undefined; }
     const rawLimits = await server.readLimits();
     const limits = isRecord(rawLimits) ? rawLimits : undefined;
-    const byId = limits && isRecord(limits.rateLimitsByLimitId) ? limits.rateLimitsByLimitId.codex : undefined;
-    const snapshot = byId ?? limits?.rateLimits;
-    const { weekly: window, session: sessionWindow } = codexWindows(snapshot);
+    const snapshot = codexLimitSnapshot(limits);
+    const { weekly: window, session: sessionWindow, sessionWindow: sessionStatus } = codexWindows(snapshot);
     let usage: UsageSnapshot | undefined;
-    if (limits && window && sessionWindow && isNumber(window.usedPercent) && isNumber(window.resetsAt) && isNumber(sessionWindow.usedPercent) && isNumber(sessionWindow.resetsAt)) {
+    if (limits && window && isNumber(window.usedPercent) && window.usedPercent >= 0 && window.usedPercent <= 100 && isNumber(window.resetsAt)
+      && (sessionStatus === 'absent' || (sessionWindow && isNumber(sessionWindow.usedPercent) && sessionWindow.usedPercent >= 0 && sessionWindow.usedPercent <= 100 && isNumber(sessionWindow.resetsAt)))) {
       const iso = (seconds: number): string | undefined => {
         const milliseconds = seconds * 1000;
         if (!Number.isFinite(milliseconds) || Math.abs(milliseconds) > 8.64e15) return undefined;
         return new Date(milliseconds).toISOString();
       };
       const resetsAt = iso(window.resetsAt);
-      const sessionResetsAt = iso(sessionWindow.resetsAt);
-      if (resetsAt && sessionResetsAt) {
+      const sessionResetsAt = sessionWindow ? iso(sessionWindow.resetsAt as number) : undefined;
+      if (resetsAt && (sessionStatus === 'absent' || sessionResetsAt)) {
         usage = {
           provider: 'codex', observedAt: now.toISOString(), weeklyUsedPercent: window.usedPercent,
-          resetsAt, sessionUsedPercent: sessionWindow.usedPercent, sessionResetsAt,
+          resetsAt, sessionWindow: sessionStatus,
+          ...(sessionWindow && sessionResetsAt ? { sessionUsedPercent: sessionWindow.usedPercent as number, sessionResetsAt } : {}),
           usageAllowed: typeof limits.ordinaryUsageAllowed === 'boolean' ? limits.ordinaryUsageAllowed : null,
         };
       }
@@ -142,7 +153,9 @@ export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | 
       const durations = extractWindows(snapshot).map((item) => typeof item.windowDurationMins === 'number' ? String(item.windowDurationMins) : 'unknown');
       const legacy = limits ? extractWindows(limits.rateLimits).map((item) => typeof item.windowDurationMins === 'number' ? String(item.windowDurationMins) : 'unknown') : [];
       const bucketIds = limits && isRecord(limits.rateLimitsByLimitId) ? Object.keys(limits.rateLimitsByLimitId).join(',') : 'none';
-      debug(`Codex usage window metadata is incomplete (codex bucket: ${durations.join(',') || 'none'}; legacy: ${legacy.join(',') || 'none'}; buckets: ${bucketIds}).`);
+      const allowed = limits?.ordinaryUsageAllowed;
+      const allowedText = typeof allowed === 'boolean' ? String(allowed) : allowed === null || allowed === undefined ? 'unknown' : 'invalid';
+      debug(`Codex usage window metadata is incomplete (codex bucket: ${durations.join(',') || 'none'}; legacy: ${legacy.join(',') || 'none'}; buckets: ${bucketIds}; ordinary usage allowed: ${allowedText}; session: ${sessionStatus}).`);
     }
     const effectiveConfig = await server.readConfig(process.cwd());
     const config = isRecord(effectiveConfig) && isRecord(effectiveConfig.config) ? effectiveConfig.config : undefined;

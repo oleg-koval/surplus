@@ -20,7 +20,7 @@ export const parseClaudeStatusLine = (payload: unknown, now = new Date()): Usage
   const sessionResetMs = sessionResetsAt * 1000;
   if (!Number.isFinite(weeklyResetMs) || Math.abs(weeklyResetMs) > 8.64e15 || !Number.isFinite(sessionResetMs) || Math.abs(sessionResetMs) > 8.64e15) return undefined;
   return {
-    provider: 'claude', observedAt: now.toISOString(), weeklyUsedPercent: used,
+    provider: 'claude', observedAt: now.toISOString(), weeklyUsedPercent: used, sessionWindow: 'available',
     resetsAt: new Date(resetsAt * 1000).toISOString(), sessionUsedPercent: sessionUsed,
     sessionResetsAt: new Date(sessionResetsAt * 1000).toISOString(), usageAllowed: true,
   };

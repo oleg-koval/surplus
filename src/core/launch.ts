@@ -6,7 +6,7 @@ import type { Provider } from './types.js';
 
 export const hasExplicitOverride = (provider: Provider, args: readonly string[], env = process.env): boolean => {
   if (env.SURPLUS_MODEL || env.SURPLUS_EFFORT || env.CODEX_MODEL || env.ANTHROPIC_MODEL) return true;
-  if (provider === 'claude' && (env.ANTHROPIC_API_KEY || env.CLAUDE_CODE_USE_BEDROCK || env.CLAUDE_CODE_USE_VERTEX || env.CLAUDE_CODE_USE_FOUNDRY || env.CLAUDE_CODE_EFFORT_LEVEL)) return true;
+  if (provider === 'claude' && (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_BASE_URL || env.CLAUDE_CODE_USE_BEDROCK || env.CLAUDE_CODE_USE_VERTEX || env.CLAUDE_CODE_USE_FOUNDRY || env.CLAUDE_CODE_EFFORT_LEVEL)) return true;
   const sentinel = args.indexOf('--');
   const cliArgs = sentinel < 0 ? args : args.slice(0, sentinel);
   if (cliArgs.some((arg) => ['--model', '-m', '--effort', '--profile', '-p'].includes(arg) || arg.startsWith('--model=') || arg.startsWith('--effort=') || /^-[mp].+/.test(arg))) return true;
@@ -15,9 +15,25 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
     return ['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm'].includes(cliArgs[0] ?? '')
       || cliArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings'].includes(arg) || arg.startsWith('--resume=') || arg.startsWith('--cloud='));
   }
-  return ['exec', 'resume', 'fork', 'app', 'app-server', 'remote-control', 'login', 'logout', 'doctor', 'update', 'features', 'mcp', 'plugin', 'completion', 'agents', 'review'].includes(cliArgs[0] ?? '')
-    || cliArgs.some((arg) => ['--config', '-c', '--worktree', '-C', '--cd'].includes(arg) || arg.startsWith('--config=') || arg.startsWith('--cd=') || /^-C.+/.test(arg));
+  if (cliArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg) || arg.startsWith('--local-provider=') || arg.startsWith('--remote=') || arg.startsWith('--remote-auth-token-env='))) return true;
+  if (cliArgs.some((arg) => ['--config', '-c', '--worktree', '-C', '--cd'].includes(arg) || arg.startsWith('--config=') || arg.startsWith('--cd=') || /^-C.+/.test(arg))) return true;
+  const utilityCommands = new Set(['agents', 'exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'app-server', 'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'queue', 'archive', 'delete', 'unarchive', 'migrate-rollouts', 'cloud', 'cloud-tasks', 'exec-server', 'features', 'help', 'resume', 'fork']);
+  const valueOptions = new Set(['-c', '--config', '--enable', '--disable', '--remote', '--remote-auth-token-env', '-i', '--image', '-m', '--model', '-p', '--profile', '-s', '--sandbox', '-a', '--ask-for-approval', '-C', '--cd', '--add-dir']);
+  let command: string | undefined;
+  for (let index = 0; index < cliArgs.length; index += 1) {
+    const arg = cliArgs[index];
+    if (arg === undefined) continue;
+    if (arg.startsWith('-')) {
+      if (valueOptions.has(arg)) index += 1;
+      continue;
+    }
+    command = arg;
+    break;
+  }
+  return utilityCommands.has(command ?? '');
 };
+
+export const shouldAutomaticallyRoute = (stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined): boolean => stdinIsTTY === true && stdoutIsTTY === true;
 
 const findExecutable = async (name: string, env: NodeJS.ProcessEnv): Promise<string | undefined> => {
   const explicit = env[`SURPLUS_${name.toUpperCase()}_BIN`];

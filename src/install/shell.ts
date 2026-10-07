@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
@@ -31,13 +31,21 @@ const replaceManagedBlock = (source: string, replacement: string): string => {
 };
 
 const writeAtomic = async (path: string, contents: string, requestedMode: number): Promise<void> => {
+  let destination = path;
+  let linkInfo: Awaited<ReturnType<typeof lstat>> | undefined;
+  try {
+    linkInfo = await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (linkInfo?.isSymbolicLink()) destination = await realpath(path);
   let mode = requestedMode;
-  try { mode = (await stat(path)).mode & 0o777; } catch { /* Use the private default mode. */ }
-  await mkdir(join(path, '..'), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomUUID()}.tmp`;
+  try { mode = (await stat(destination)).mode & 0o777; } catch { /* Use the private default mode. */ }
+  await mkdir(join(destination, '..'), { recursive: true, mode: 0o700 });
+  const temporary = `${destination}.${randomUUID()}.tmp`;
   await writeFile(temporary, contents, { mode });
   await chmod(temporary, mode);
-  await rename(temporary, path);
+  await rename(temporary, destination);
 };
 
 export const installShell = async (): Promise<void> => {
@@ -90,16 +98,22 @@ export const installClaudeStatusLine = async (): Promise<void> => {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const path = join(dataDir(), 'claude-statusline-backup.json');
-  const backup = { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine };
   const current = settings.statusLine;
   const existingCommand = typeof current === 'object' && current !== null && !Array.isArray(current) && typeof (current as Record<string, unknown>).command === 'string'
     ? (current as Record<string, string>).command : undefined;
   if (current !== undefined && (typeof current !== 'object' || current === null || Array.isArray(current) || (current as Record<string, unknown>).type !== 'command' || !existingCommand)) {
     throw new Error('Surplus can only chain a Claude command statusline; preserve other statusline types manually.');
   }
+  try {
+    const saved: unknown = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    if (typeof saved === 'object' && saved !== null && !Array.isArray(saved)
+      && typeof (saved as Record<string, unknown>).managedCommand === 'string'
+      && existingCommand === (saved as Record<string, string>).managedCommand) return;
+  } catch { /* A fresh install records the current user statusline below. */ }
   const managedCommand = statuslineCommand(existingCommand);
   const currentObject = current as Record<string, unknown> | undefined;
   if (currentObject?.command === managedCommand) return;
+  const backup = { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand };
   await writeAtomic(path, `${JSON.stringify(backup, null, 2)}\n`, 0o600);
   settings.statusLine = { ...(currentObject ?? {}), type: 'command', command: managedCommand };
   await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
@@ -108,7 +122,7 @@ export const installClaudeStatusLine = async (): Promise<void> => {
 export const uninstallClaudeStatusLine = async (): Promise<void> => {
   const settingsPath = claudeSettingsPath();
   const backupPath = join(dataDir(), 'claude-statusline-backup.json');
-  let backup: { present?: boolean; value?: unknown };
+  let backup: { present?: boolean; value?: unknown; managedCommand?: string };
   let settings: Record<string, unknown>;
   try {
     backup = JSON.parse(await readFile(backupPath, 'utf8')) as { present?: boolean; value?: unknown };
@@ -117,7 +131,8 @@ export const uninstallClaudeStatusLine = async (): Promise<void> => {
   const current = settings.statusLine;
   const previousCommand = typeof backup.value === 'object' && backup.value !== null && !Array.isArray(backup.value) && typeof (backup.value as Record<string, unknown>).command === 'string'
     ? (backup.value as Record<string, string>).command : undefined;
-  if (typeof current !== 'object' || current === null || (current as Record<string, unknown>).command !== statuslineCommand(previousCommand)) return;
+  const ownedCommand = typeof backup.managedCommand === 'string' ? backup.managedCommand : statuslineCommand(previousCommand);
+  if (typeof current !== 'object' || current === null || (current as Record<string, unknown>).command !== ownedCommand) return;
   if (backup.present) settings.statusLine = backup.value;
   else delete settings.statusLine;
   await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);

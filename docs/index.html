@@ -98,7 +98,8 @@
         <div class="demo-grid">
           <div class="card">
             <label class="control"><span class="control-head"><span>Weekly allowance remaining</span><output id="weeklyOut">40%</output></span><input id="weekly" type="range" min="0" max="100" value="40"><span class="note">Needs at least 25% remaining and enough to cover a 5% reserve plus 5% expected use.</span></label>
-            <label class="control"><span class="control-head"><span>Five-hour allowance remaining</span><output id="sessionOut">80%</output></span><input id="session" type="range" min="0" max="100" value="80"><span class="note">Needs at least 25% headroom in this shorter provider window.</span></label>
+            <label class="control"><span class="control-head"><span>Five-hour allowance remaining</span><output id="sessionOut">80%</output></span><input id="session" type="range" min="0" max="100" value="80"><span class="note">When reported, this window needs at least 25% headroom. Codex may report only weekly usage.</span></label>
+            <label class="control"><span class="control-head"><span>Codex reports only its weekly window</span><output id="weeklyOnlyOut">No</output></span><input id="weeklyOnly" type="checkbox"><span class="note">Eligible only when Codex confirms included usage and exactly one weekly bucket is reported.</span></label>
             <label class="control"><span class="control-head"><span>Hours until weekly reset</span><output id="hoursOut">24h</output></span><input id="hours" type="range" min="0" max="168" value="24"><span class="note">Premium windows open only during the final 48 hours.</span></label>
             <label class="control"><span class="control-head"><span>Provider confirms included usage</span><output id="allowedOut">Yes</output></span><input id="allowed" type="checkbox" checked></label>
             <label class="control"><span class="control-head"><span>Telemetry is fresh</span><output id="freshOut">Yes</output></span><input id="fresh" type="checkbox" checked></label>
@@ -107,7 +108,7 @@
         </div>
       </section>
       <section class="section">
-        <div class="install"><div><div class="eyebrow">One-time install</div><h2>Keep launching Claude or Codex as usual.</h2></div><div><pre>npm install --global github:oleg-koval/surplus
+        <div class="install"><div><div class="eyebrow">One-time install</div><h2>Keep launching Claude or Codex as usual.</h2></div><div><pre>npm install --global https://github.com/oleg-koval/surplus/releases/download/v0.1.0/surplus-cli-0.1.0.tgz
 surplus install</pre><a class="button" href="https://github.com/oleg-koval/surplus#install">Read the install guide ↗</a></div></div>
       </section>
     </main>
@@ -116,32 +117,35 @@ surplus install</pre><a class="button" href="https://github.com/oleg-koval/surpl
   <script>
     const weekly = document.querySelector('#weekly');
     const session = document.querySelector('#session');
+    const weeklyOnly = document.querySelector('#weeklyOnly');
     const hours = document.querySelector('#hours');
     const allowed = document.querySelector('#allowed');
     const fresh = document.querySelector('#fresh');
     const update = () => {
       const w = Number(weekly.value), s = Number(session.value), h = Number(hours.value);
+      session.disabled = weeklyOnly.checked;
       document.querySelector('#weeklyOut').value = `${w}%`;
-      document.querySelector('#sessionOut').value = `${s}%`;
+      document.querySelector('#sessionOut').value = weeklyOnly.checked ? 'not reported' : `${s}%`;
+      document.querySelector('#weeklyOnlyOut').value = weeklyOnly.checked ? 'Yes' : 'No';
       document.querySelector('#hoursOut').value = `${h}h`;
       document.querySelector('#allowedOut').value = allowed.checked ? 'Yes' : 'No';
       document.querySelector('#freshOut').value = fresh.checked ? 'Yes' : 'No';
-      const eligible = fresh.checked && allowed.checked && w >= 25 && w >= 10 && s >= 25 && h > 0 && h <= 48;
+      const eligible = fresh.checked && allowed.checked && w >= 25 && w >= 10 && (weeklyOnly.checked || s >= 25) && h > 0 && h <= 48;
       const title = document.querySelector('#resultTitle');
       const text = document.querySelector('#resultText');
       const pill = document.querySelector('#resultPill');
       if (eligible) {
         title.textContent = 'Premium window';
-        text.textContent = 'Weekly and five-hour headroom are available close to reset. Your configured premium choice applies at the next new session.';
+        text.textContent = weeklyOnly.checked ? 'Fresh weekly headroom and Codex included-usage permission are available close to reset.' : 'Weekly and five-hour headroom are available close to reset. Your configured premium choice applies at the next new session.';
         pill.textContent = 'UPGRADE ELIGIBLE'; pill.classList.remove('off');
       } else {
         title.textContent = 'Use provider default';
-        const reason = !fresh.checked ? 'Telemetry is stale.' : !allowed.checked ? 'The provider did not confirm included usage.' : h === 0 ? 'The reset has passed.' : w < 25 ? 'Weekly headroom is below the threshold.' : s < 25 ? 'Five-hour headroom is below the threshold.' : 'The reset is more than 48 hours away.';
+        const reason = !fresh.checked ? 'Telemetry is stale.' : !allowed.checked ? 'The provider did not confirm included usage.' : h === 0 ? 'The reset has passed.' : w < 25 ? 'Weekly headroom is below the threshold.' : !weeklyOnly.checked && s < 25 ? 'Five-hour headroom is below the threshold.' : 'The reset is more than 48 hours away.';
         text.textContent = `${reason} Surplus leaves the model choice unchanged.`;
         pill.textContent = 'NO UPGRADE'; pill.classList.add('off');
       }
     };
-    [weekly, session, hours, allowed, fresh].forEach((control) => control.addEventListener('input', update));
+    [weekly, session, weeklyOnly, hours, allowed, fresh].forEach((control) => control.addEventListener('input', update));
     update();
   </script>
 </body>

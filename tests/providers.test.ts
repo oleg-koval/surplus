@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseClaudeStatusLine } from '../src/providers/claude.js';
-import { codexWindows, selectEffectiveCodexModel } from '../src/providers/codex.js';
+import { codexLimitSnapshot, codexWindows, selectEffectiveCodexModel } from '../src/providers/codex.js';
 import { codexUpgradeConfig } from '../src/core/codex-policy.js';
 import { defaultConfig } from '../src/core/files.js';
 
@@ -24,6 +24,15 @@ describe('Claude statusline telemetry', () => {
 });
 
 describe('Codex window selection', () => {
+  it('uses the codex bucket when the map exists and rejects a mismatched legacy bucket', () => {
+    const codex = { limitId: 'codex', primary: { usedPercent: 12, windowDurationMins: 10080 } };
+    const other = { limitId: 'codex_other', primary: { usedPercent: 12, windowDurationMins: 10080 } };
+    expect(codexLimitSnapshot({ rateLimitsByLimitId: { codex: other }, rateLimits: codex })).toBe(other);
+    expect(codexLimitSnapshot({ rateLimitsByLimitId: { codex_other: other }, rateLimits: codex })).toBeUndefined();
+    expect(codexLimitSnapshot({ rateLimits: other })).toBeUndefined();
+    expect(codexLimitSnapshot({ rateLimits: codex })).toBe(codex);
+  });
+
   it('classifies weekly and short windows by their durations, independent of primary/secondary order', () => {
     const windows = codexWindows({ primary: { usedPercent: 12, windowDurationMins: 10080 }, secondary: { usedPercent: 40, windowDurationMins: 300 } });
     expect(windows.weekly?.usedPercent).toBe(12);
@@ -31,7 +40,12 @@ describe('Codex window selection', () => {
   });
 
   it('does not guess when a provider window lacks duration metadata', () => {
-    expect(codexWindows({ primary: { usedPercent: 12 }, secondary: { usedPercent: 40 } })).toEqual({});
+    expect(codexWindows({ primary: { usedPercent: 12 }, secondary: { usedPercent: 40 } }).sessionWindow).toBe('invalid');
+  });
+
+  it('marks a missing short window only when the sole reported window is weekly', () => {
+    expect(codexWindows({ primary: { usedPercent: 12, windowDurationMins: 10080 }, secondary: null }).sessionWindow).toBe('absent');
+    expect(codexWindows({ primary: { usedPercent: 12, windowDurationMins: 10080 }, secondary: { usedPercent: 0 } }).sessionWindow).toBe('invalid');
   });
 
   it('uses the catalog default only when Codex config has no explicit model', () => {
@@ -45,7 +59,7 @@ describe('Codex window selection', () => {
 describe('Codex effort upgrade guard', () => {
   const config = defaultConfig.providers.codex;
   const discovery = {
-    usage: { provider: 'codex' as const, observedAt: now.toISOString(), weeklyUsedPercent: 20, resetsAt: new Date(now.getTime() + 60_000).toISOString(), sessionUsedPercent: 10, sessionResetsAt: new Date(now.getTime() + 60_000).toISOString(), usageAllowed: true },
+    usage: { provider: 'codex' as const, observedAt: now.toISOString(), weeklyUsedPercent: 20, resetsAt: new Date(now.getTime() + 60_000).toISOString(), sessionWindow: 'available' as const, sessionUsedPercent: 10, sessionResetsAt: new Date(now.getTime() + 60_000).toISOString(), usageAllowed: true },
     effectiveModel: 'gpt-default', effectiveEffort: 'low', supportedEfforts: ['low', 'high'],
     models: [{ model: 'gpt-default', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }],
   };

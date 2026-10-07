@@ -2,13 +2,13 @@
 
 ## Goal
 
-Use available included coding-assistant allowance before a weekly reset by selecting an opt-in stronger model or reasoning level for a new interactive session when the provider's observed weekly and five-hour windows have enough headroom.
+Use available included coding-assistant allowance before a weekly reset by selecting an opt-in stronger model or reasoning level for a new interactive session when the provider's observed weekly allowance has enough headroom.
 
 ## Product rules
 
 - Provider telemetry is read locally and is never guessed from transcripts, tokens, plan names, or web APIs.
-- Automatic selection requires a fresh weekly reading, a fresh five-hour reading, a known reset time, and provider confirmation that included usage is allowed.
-- Promotion requires at least 25% weekly allowance remaining, at least 25% of the five-hour allowance remaining, a weekly reset within 48 hours, and room for the configured 5% reserve plus 5% expected-use budget.
+- Automatic selection requires fresh weekly data, a known reset time, and provider confirmation that included usage is allowed. A reported short window must also be fresh and valid; only Codex may omit it when the app-server reports exactly one weekly window.
+- Promotion requires at least 25% weekly allowance remaining, a weekly reset within 48 hours, and room for the configured 5% reserve plus 5% expected-use budget. A reported five-hour window must have at least 25% remaining.
 - Hysteresis reduces rapid flip-flopping between launches. A new provider reset starts a new decision window.
 - When telemetry or model support is ambiguous, Surplus leaves provider defaults alone.
 - A user's CLI flags, config/profile overrides, billing path, and resumed or scripted sessions take precedence.
@@ -24,7 +24,7 @@ Use available included coding-assistant allowance before a weekly reset by selec
 
 ## Delivery gates
 
-- Unit tests cover reset boundaries, stale/missing inputs, both usage windows, reserve and hysteresis behavior, telemetry parsing, override preservation, and install/uninstall ownership.
+- Unit tests cover reset boundaries, stale/missing inputs, available and absent short-window data, reserve and hysteresis behavior, telemetry parsing, override preservation, and install/uninstall ownership.
 - CI runs strict typecheck, lint, tests, and build on supported Node.js.
 - `npm pack` installs into a clean fixture and starts the bundled CLI.
 - Live protocol smoke reads Codex metadata only; no model turn is sent.

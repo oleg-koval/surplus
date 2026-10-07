@@ -4,7 +4,7 @@ Launch runbook. Do not announce availability until the release download and inst
 
 ## Positioning
 
-Saved allowance. Stronger models.
+Saved allowance. Stronger settings.
 
 Surplus is for Claude Code and Codex CLI subscribers who finish a usage week with spare allowance. It checks reported headroom before a new terminal session and applies stronger settings when reset is close. Install once, then keep using your usual commands.
 

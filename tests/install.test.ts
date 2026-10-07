@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -45,10 +45,12 @@ describe('reversible install', () => {
       const original = { type: 'command', command: "printf '%s' \"$HOME\"", padding: 8 };
       await writeFile(settings, JSON.stringify({ theme: 'dark', statusLine: original }));
       await installClaudeStatusLine();
+      await installClaudeStatusLine();
       const installed = JSON.parse(await readFile(settings, 'utf8')) as { theme: string; statusLine: { command: string; padding: number } };
       expect(installed.theme).toBe('dark');
       expect(installed.statusLine.padding).toBe(8);
       expect(installed.statusLine.command).toContain('--original=');
+      expect(installed.statusLine.command.match(/capture claude/g)).toHaveLength(1);
       await uninstallClaudeStatusLine();
       const restored = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: unknown };
       expect(restored.statusLine).toEqual(original);
@@ -63,6 +65,30 @@ describe('reversible install', () => {
       await uninstallClaudeStatusLine();
       const current = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: { command: string } };
       expect(current.statusLine.command).toBe('my-new-line');
+    });
+  });
+
+  it('updates a shell startup file through its symlink without replacing the link', async () => {
+    await withHome(async (home) => {
+      const rc = join(home, '.zshrc');
+      const target = join(home, 'shared-zshrc');
+      await writeFile(target, 'export USER_VALUE=kept\n');
+      await symlink(target, rc);
+      await installShell();
+      expect((await lstat(rc)).isSymbolicLink()).toBe(true);
+      expect(await readFile(target, 'utf8')).toContain('surplus managed block');
+      await uninstallShell();
+      expect((await lstat(rc)).isSymbolicLink()).toBe(true);
+      expect(await readFile(target, 'utf8')).toBe('export USER_VALUE=kept\n');
+    });
+  });
+
+  it('does not replace a broken shell startup symlink', async () => {
+    await withHome(async (home) => {
+      const rc = join(home, '.zshrc');
+      await symlink(join(home, 'missing-startup-file'), rc);
+      await expect(installShell()).rejects.toThrow();
+      expect((await lstat(rc)).isSymbolicLink()).toBe(true);
     });
   });
 });

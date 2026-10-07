@@ -20,16 +20,17 @@ export const decide = (input: {
   if (!Number.isFinite(reset) || reset <= now.getTime()) return fallback('The weekly reset time is missing or has passed.');
   const sessionReset = usage.sessionResetsAt ? Date.parse(usage.sessionResetsAt) : Number.NaN;
   const sessionUsed = usage.sessionUsedPercent;
-  if (typeof sessionUsed !== 'number' || !Number.isFinite(sessionUsed) || sessionUsed < 0 || sessionUsed > 100 || !Number.isFinite(sessionReset) || sessionReset <= now.getTime()) {
+  if (usage.sessionWindow === 'available' && (typeof sessionUsed !== 'number' || !Number.isFinite(sessionUsed) || sessionUsed < 0 || sessionUsed > 100 || !Number.isFinite(sessionReset) || sessionReset <= now.getTime())) {
     return fallback('Fresh session-window telemetry is unavailable.');
   }
   if (usage.usageAllowed !== true) return fallback('The provider did not confirm included usage is available.');
+  if (usage.sessionWindow !== 'available' && !(usage.provider === 'codex' && usage.sessionWindow === 'absent')) return fallback('Fresh session-window telemetry is unavailable.');
   if (!Number.isFinite(usage.weeklyUsedPercent) || usage.weeklyUsedPercent < 0 || usage.weeklyUsedPercent > 100) {
     return fallback('The provider returned an invalid weekly usage percentage.');
   }
 
   const remaining = 100 - usage.weeklyUsedPercent;
-  const sessionRemaining = 100 - sessionUsed;
+  const sessionRemaining = typeof sessionUsed === 'number' ? 100 - sessionUsed : 100;
   const minutesUntilReset = Math.floor((reset - now.getTime()) / 60_000);
   const requiredHeadroom = config.reservePercent + config.expectedUsageUntilResetPercent;
   const sameWindow = previous?.resetAt === usage.resetsAt;
@@ -39,7 +40,7 @@ export const decide = (input: {
     : config.minWeeklyRemainingPercent;
 
   if (remaining < requiredHeadroom) return fallback('Weekly allowance cannot cover the configured session budget and reserve.', remaining, minutesUntilReset);
-  if (sessionRemaining < config.minSessionRemainingPercent) return fallback('Session-window allowance is below the configured headroom.', remaining, minutesUntilReset);
+  if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback('Session-window allowance is below the configured headroom.', remaining, minutesUntilReset);
   if (remaining < threshold) return fallback('Weekly allowance is below the premium threshold.', remaining, minutesUntilReset);
   if (minutesUntilReset > config.nearResetMinutes) return fallback('The weekly reset is not close enough to use the premium window.', remaining, minutesUntilReset);
 

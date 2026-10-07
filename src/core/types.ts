@@ -5,6 +5,7 @@ export interface UsageSnapshot {
   readonly observedAt: string;
   readonly weeklyUsedPercent: number;
   readonly resetsAt: string;
+  readonly sessionWindow: 'available' | 'absent' | 'invalid';
   readonly sessionUsedPercent?: number;
   readonly sessionResetsAt?: string;
   readonly identityHash?: string;
