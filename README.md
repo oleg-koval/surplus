@@ -6,7 +6,7 @@ Surplus watches the included usage windows exposed by Claude Code and Codex CLI.
 
 ## Install
 
-Requires Node.js 20.10 or newer, plus Claude Code and/or Codex CLI.
+Requires POSIX Node.js 22.21+ or 24.10+, plus Claude Code and/or Codex CLI. Interactive wrappers use stable `process.execve` to preserve provider PID, foreground-terminal signals, and job control. Windows interactive routing is unsupported; shell installation supports zsh and bash.
 
 Codex usage and model discovery were verified with Codex CLI 0.160.1 and its app-server protocol. Older Codex clients that do not expose the required protocol fields safely keep their normal settings.
 
@@ -42,7 +42,7 @@ surplus demo                          # deterministic sample, no account access
 surplus uninstall
 ```
 
-Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, account identity hashes, policy state, and a premium-launch count live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
+Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, account identity hashes, policy state, and a premium-launch attempt count live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
 
 ## Important limits
 
@@ -60,7 +60,7 @@ npm run ci
 npm run build
 ```
 
-Building and testing require Node.js 20.19 or newer. The packaged CLI runtime supports Node.js 20.10 or newer. Please file bugs without credentials, transcripts, prompts, or account identifiers. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Building and testing require Node.js 22.21+ or 24.10+. Please file bugs without credentials, transcripts, prompts, or account identifiers. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
+import { configPath, defaultConfig, saveConfig } from '../src/core/files.js';
+import { installClaudeStatusLine, installShell, statuslineCommand, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
 
 const tempHomes: string[] = [];
 const withHome = async (run: (home: string) => Promise<void>): Promise<void> => {
@@ -96,6 +97,20 @@ describe('reversible install', () => {
       await uninstallClaudeStatusLine();
       const restored = JSON.parse(await readFile(settingsPath, 'utf8')) as { statusLine: Record<string, unknown> };
       expect(restored.statusLine).toEqual({ ...original, padding: 16, localEdit: true });
+    });
+  });
+
+  it('recovers ownership of a pre-existing Surplus statusline without a backup record', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      const backupPath = join(home, 'state/surplus/claude-statusline-backup.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      await writeFile(settings, JSON.stringify({ statusLine: { type: 'command', command: statuslineCommand() } }));
+
+      expect(await installClaudeStatusLine()).toBe(true);
+      expect(JSON.parse(await readFile(backupPath, 'utf8'))).toEqual({ present: false, managedCommand: statuslineCommand() });
+      await uninstallClaudeStatusLine();
+      expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({});
     });
   });
 
@@ -218,6 +233,32 @@ describe('reversible install', () => {
       await symlink(join(home, 'missing-startup-file'), rc);
       await expect(installShell()).rejects.toThrow();
       expect((await lstat(rc)).isSymbolicLink()).toBe(true);
+    });
+  });
+
+  it('updates the config target through its symlink without replacing the link', async () => {
+    await withHome(async (home) => {
+      const path = configPath();
+      const target = join(home, 'shared-config.json');
+      await writeFile(target, '{}\n');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, 'config', 'surplus'), { recursive: true }));
+      await symlink(target, path);
+
+      await saveConfig(defaultConfig);
+
+      expect((await lstat(path)).isSymbolicLink()).toBe(true);
+      expect(JSON.parse(await readFile(target, 'utf8'))).toEqual(defaultConfig);
+    });
+  });
+
+  it('does not replace a broken config symlink', async () => {
+    await withHome(async (home) => {
+      const path = configPath();
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, 'config', 'surplus'), { recursive: true }));
+      await symlink(join(home, 'missing-config-target.json'), path);
+
+      await expect(saveConfig(defaultConfig)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect((await lstat(path)).isSymbolicLink()).toBe(true);
     });
   });
 

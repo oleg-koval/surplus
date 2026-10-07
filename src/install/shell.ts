@@ -158,7 +158,11 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   const managedCommand = statuslineCommand(originalCommand);
   const currentObject = current as Record<string, unknown> | undefined;
   if (alreadyOwned && existingCommand === managedCommand) return false;
-  if (!alreadyOwned && currentObject?.command === managedCommand) return false;
+  if (!alreadyOwned && currentObject?.command === statuslineCommand()) {
+    const recoveredOwnership = `${JSON.stringify({ present: false, managedCommand: existingCommand }, null, 2)}\n`;
+    await writeAtomic(path, recoveredOwnership, 0o600);
+    return true;
+  }
   const backup = alreadyOwned && previous
     ? { present: previous.present, value: previous.value, managedCommand }
     : { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand };

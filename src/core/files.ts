@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -16,11 +16,19 @@ const readJson = async <T>(path: string): Promise<T | undefined> => {
 };
 
 export const atomicJson = async (path: string, value: unknown): Promise<void> => {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomUUID()}.tmp`;
+  let destination = path;
+  let isSymlink = false;
+  try {
+    isSymlink = (await lstat(path)).isSymbolicLink();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (isSymlink) destination = await realpath(path);
+  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+  const temporary = `${destination}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await chmod(temporary, 0o600);
-  await rename(temporary, path);
+  await rename(temporary, destination);
 };
 
 const isProviderConfig = (value: unknown): value is ProviderConfig => {

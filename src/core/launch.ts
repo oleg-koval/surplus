@@ -53,12 +53,19 @@ const findExecutable = async (name: string, env: NodeJS.ProcessEnv): Promise<str
 export const launchProvider = async (provider: Provider, args: readonly string[], env = process.env, onStarted?: () => Promise<void>): Promise<number> => {
   const executable = await findExecutable(provider, env);
   if (!executable) throw new Error(`Could not find the original ${provider} executable in PATH.`);
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    if (process.platform === 'win32' || !process.execve) {
+      throw new Error('Interactive launches require POSIX Node.js with process.execve (Node.js 22.21+ or 24.10+).');
+    }
+    if (onStarted) await onStarted();
+    const executableEnv = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+    process.execve(executable, [executable, ...args], executableEnv);
+  }
   const child = spawn(executable, [...args], { stdio: 'inherit', env });
   return await new Promise((resolve, reject) => {
     const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-    const forwardSignals = !(process.stdin.isTTY && process.stdout.isTTY);
     const handlers = new Map<NodeJS.Signals, () => void>(signals.map((signal) => [signal, () => {
-      if (forwardSignals) child.kill(signal);
+      child.kill(signal);
     }]));
     handlers.forEach((handler, signal) => process.on(signal, handler));
     const removeHandlers = (): void => { handlers.forEach((handler, signal) => { process.off(signal, handler); }); };

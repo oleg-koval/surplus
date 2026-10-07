@@ -157,7 +157,7 @@ const status = async (provider: Provider): Promise<void> => {
   const result = await prepare(provider);
   showDecision(result.decision);
   const activations = await readActivations();
-  if (activations?.count) process.stdout.write(`Local Surplus launches: ${String(activations.count)} (stored on this device only)\n`);
+  if (activations?.count) process.stdout.write(`Local Surplus premium launch attempts: ${String(activations.count)} (stored on this device only)\n`);
 };
 
 const configure = async (provider: Provider, args: string[]): Promise<void> => {

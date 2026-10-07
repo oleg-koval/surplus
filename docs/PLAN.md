@@ -20,12 +20,12 @@ Use available included coding-assistant allowance before a weekly reset by selec
 2. Codex CLI: use the local app-server `account/read`, `account/rateLimits/read`, `config/read`, and paginated `model/list` protocol. Match reasoning support to the effective configured model. Do not use model migration recommendations as quality rankings.
 3. Launch routing: shell wrappers intercept ordinary interactive `claude` and `codex` commands. Explicit choices, resume/background/cloud modes, and machine output bypass selection.
 4. Safety: validated config, atomic private files, conservative fallbacks, reversible statusline/shell setup, and isolated-home installer coverage.
-5. Adoption: GitHub-first installation, a self-contained sample-data explainer, no default telemetry, and a voluntary local launch counter.
+5. Adoption: GitHub-first installation, a self-contained sample-data explainer, no default telemetry, and a local premium launch-attempt counter with voluntary reporting.
 
 ## Delivery gates
 
 - Unit tests cover reset boundaries, stale/missing inputs, available and absent short-window data, reserve and hysteresis behavior, telemetry parsing, override preservation, and install/uninstall ownership.
-- CI runs strict typecheck, lint, tests, and build on supported Node.js.
+- CI runs strict typecheck, lint, tests, and build on Node.js 22.21+ and 24.10+. Interactive launches use stable POSIX `process.execve` so provider and wrapper share the same PID and foreground process group.
 - `npm pack` installs into a clean fixture and starts the bundled CLI.
 - Live protocol smoke reads Codex metadata only; no model turn is sent. The verified Codex CLI baseline is 0.160.1; older clients missing required fields safely retain their normal settings.
 - Launch materials distinguish actual release/download/star evidence from targets and hypotheses.

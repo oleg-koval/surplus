@@ -21,39 +21,19 @@ afterEach(async () => {
 });
 
 describe('read-only status decisions', () => {
-  it('does not persist premium hysteresis before a real provider launch', async () => {
+  it('shows a premium status decision without persisting routing hysteresis', async () => {
     const home = await mkdtemp(join(tmpdir(), 'surplus-status-readonly-'));
     homes.push(home);
-    const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'SURPLUS_CODEX_BIN', 'SURPLUS_TEST_WEEKLY_USED', 'SURPLUS_TEST_PROVIDER_ARGS'];
+    const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'SURPLUS_CODEX_BIN', 'SURPLUS_TEST_WEEKLY_USED'];
     keys.forEach(saveEnv);
     const provider = join(process.cwd(), 'tests/fixtures/fake-codex.mjs');
-    const providerArgsPath = join(home, 'provider-args.jsonl');
     process.env.HOME = home;
     process.env.XDG_CONFIG_HOME = join(home, 'config');
     process.env.XDG_STATE_HOME = join(home, 'state');
     process.env.SURPLUS_CODEX_BIN = provider;
-    process.env.SURPLUS_TEST_PROVIDER_ARGS = providerArgsPath;
-
-    const stdinDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
-    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
-    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
-    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
-    try {
-      process.env.SURPLUS_TEST_WEEKLY_USED = '74';
-      await main(['status', 'codex']);
-      const statePath = join(home, 'state/surplus/codex-state.json');
-      await expect(readFile(statePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-
-      process.env.SURPLUS_TEST_WEEKLY_USED = '78';
-      await main(['run', 'codex', 'task']);
-      const args = (await readFile(providerArgsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as string[]);
-      expect(args).toEqual([['task']]);
-      expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({ tier: 'default' });
-    } finally {
-      if (stdinDescriptor) Object.defineProperty(process.stdin, 'isTTY', stdinDescriptor);
-      else delete (process.stdin as NodeJS.ReadStream & { isTTY?: boolean }).isTTY;
-      if (stdoutDescriptor) Object.defineProperty(process.stdout, 'isTTY', stdoutDescriptor);
-      else delete (process.stdout as NodeJS.WriteStream & { isTTY?: boolean }).isTTY;
-    }
+    process.env.SURPLUS_TEST_WEEKLY_USED = '74';
+    await main(['status', 'codex']);
+    const statePath = join(home, 'state/surplus/codex-state.json');
+    await expect(readFile(statePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
