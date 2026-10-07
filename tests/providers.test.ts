@@ -53,6 +53,7 @@ describe('Claude statusline telemetry', () => {
         });
         expect(identityHash).toBe(createHash('sha256').update('fixture@example.test\norg-1\npro').digest('hex'));
       }
+      expect(readClaudeIdentityHash({ HOME: 'relative-home', XDG_STATE_HOME: join(fixture, 'valid-xdg'), PATH: providerBin })).toBeUndefined();
       expect(readClaudeIdentityHash({ SURPLUS_CLAUDE_BIN: join(fileAliasBin, 'claude'), HOME: fixture })).toBeUndefined();
     } finally {
       await rm(fixture, { recursive: true, force: true });

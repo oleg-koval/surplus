@@ -73,6 +73,9 @@ describe('provider executable lookup', () => {
         }, home);
         expect(found).toBe(realProvider);
       }
+      await expect(findExecutable('codex', {
+        HOME: '', XDG_STATE_HOME: join(fixture, 'valid-xdg'), PATH: [managedBin, providerBin].join(':'),
+      })).rejects.toThrow(/HOME must be a non-empty absolute path/);
     } finally {
       process.chdir(originalCwd);
       await rm(fixture, { recursive: true, force: true });

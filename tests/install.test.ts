@@ -1,10 +1,11 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { configPath, dataDir, defaultConfig, saveConfig } from '../src/core/files.js';
+import { resolveHomeDirectory } from '../src/core/xdg.js';
 import { installClaudeStatusLine, installShell, statuslineCommand, surplusExecutable, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
 
 const tempHomes: string[] = [];
@@ -29,6 +30,17 @@ afterEach(async () => {
 });
 
 describe('reversible install', () => {
+  it('uses the operating-system home only when HOME is unset', () => {
+    const previousHome = process.env.HOME;
+    delete process.env.HOME;
+    try {
+      expect(resolveHomeDirectory()).toBe(homedir());
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
+
   it('falls back from empty or relative XDG homes to absolute HOME-based paths', async () => {
     const originalCwd = process.cwd();
     await withHome(async (home) => {
@@ -44,6 +56,23 @@ describe('reversible install', () => {
         }
       } finally {
         process.chdir(originalCwd);
+      }
+    });
+  });
+
+  it('rejects invalid HOME before shell writes even when XDG homes are absolute', async () => {
+    await withHome(async (home) => {
+      const stateHome = join(home, 'xdg-state');
+      const configHome = join(home, 'xdg-config');
+      process.env.XDG_STATE_HOME = stateHome;
+      process.env.XDG_CONFIG_HOME = configHome;
+      for (const invalidHome of ['', 'relative-home']) {
+        process.env.HOME = invalidHome;
+        expect(() => dataDir()).toThrow(/HOME must be a non-empty absolute path/);
+        expect(() => configPath()).toThrow(/HOME must be a non-empty absolute path/);
+        await expect(installShell()).rejects.toThrow(/HOME must be a non-empty absolute path/);
+        await expect(readFile(join(stateHome, 'surplus', 'bin', 'claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(join(home, '.zshrc'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       }
     });
   });

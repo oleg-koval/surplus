@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { delimiter, join, resolve } from 'node:path';
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import type { UsageSnapshot } from '../core/types.js';
 import { surplusDataDirectory } from '../core/xdg.js';
 
@@ -35,7 +34,8 @@ export const readStatusLineInput = async (): Promise<unknown> => {
 
 export const readClaudeIdentityHash = (env = process.env): string | undefined => {
   const configuredBin = env.SURPLUS_CLAUDE_BIN;
-  const wrapperDir = join(surplusDataDirectory(env, env.HOME ?? homedir()), 'bin');
+  let wrapperDir: string;
+  try { wrapperDir = join(surplusDataDirectory(env), 'bin'); } catch { return undefined; }
   const canonicalPath = (path: string): string => {
     try { return realpathSync(path); } catch { return resolve(path); }
   };

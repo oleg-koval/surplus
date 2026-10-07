@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dataDir } from '../core/files.js';
+import { resolveHomeDirectory } from '../core/xdg.js';
 
 const begin = '# >>> surplus managed block >>>';
 const end = '# <<< surplus managed block <<<';
@@ -65,14 +65,14 @@ const firstExistingBashLoginRc = async (home: string): Promise<string> => {
 
 const shellRcs = async (): Promise<readonly string[]> => {
   const shell = process.env.SHELL ?? '';
-  const home = process.env.HOME ?? homedir();
+  const home = resolveHomeDirectory();
   if (shell.endsWith('/zsh')) return [join(zshStartupDirectory(home), '.zshrc')];
   if (shell.endsWith('/bash')) return [join(home, '.bashrc'), await firstExistingBashLoginRc(home)];
   throw new Error('Surplus supports zsh and bash installation. Run `surplus run <provider>` directly for other shells.');
 };
 
 const shellRcCandidates = (): readonly string[] => {
-  const home = process.env.HOME ?? homedir();
+  const home = resolveHomeDirectory();
   const zshDirectory = zshStartupDirectory(home);
   const zshDirectories = [zshDirectory, home];
   return [...new Set([
@@ -204,8 +204,8 @@ export const uninstallShell = async (): Promise<void> => {
   }
 };
 
-const defaultClaudeSettingsPath = (): string => join(process.env.HOME ?? homedir(), '.claude', 'settings.json');
-export const claudeSettingsPath = (): string => join(process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : join(process.env.HOME ?? homedir(), '.claude'), 'settings.json');
+const defaultClaudeSettingsPath = (): string => join(resolveHomeDirectory(), '.claude', 'settings.json');
+export const claudeSettingsPath = (): string => join(process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : join(resolveHomeDirectory(), '.claude'), 'settings.json');
 export const statuslineCommand = (originalCommand?: string): string => {
   const cli = `${shellQuote(process.execPath)} ${shellQuote(fileURLToPath(import.meta.url))} capture claude`;
   return originalCommand ? `${cli} --original=${Buffer.from(originalCommand).toString('base64')}` : cli;

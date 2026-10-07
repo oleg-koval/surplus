@@ -4,7 +4,7 @@ import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Provider } from './types.js';
-import { surplusDataDirectory } from './xdg.js';
+import { resolveHomeDirectory, surplusDataDirectory } from './xdg.js';
 
 const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
   const valueOptions = new Set([
@@ -78,9 +78,10 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
 
 export const shouldAutomaticallyRoute = (stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined, platform = process.platform): boolean => platform !== 'win32' && stdinIsTTY === true && stdoutIsTTY === true;
 
-export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeDirectory = homedir()): Promise<string | undefined> => {
+export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeDirectory?: string): Promise<string | undefined> => {
   const explicit = env[`SURPLUS_${name.toUpperCase()}_BIN`];
-  const wrapperDir = join(surplusDataDirectory(env, env.HOME ?? homeDirectory), 'bin');
+  const home = resolveHomeDirectory(env, homeDirectory ?? homedir());
+  const wrapperDir = join(surplusDataDirectory(env, home), 'bin');
   const canonicalPath = async (path: string): Promise<string> => {
     try { return await realpath(path); } catch { return resolve(path); }
   };
