@@ -1,6 +1,6 @@
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { constants as osConstants } from 'node:os';
+import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Provider } from './types.js';
@@ -38,10 +38,10 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
 
 export const shouldAutomaticallyRoute = (stdinIsTTY: boolean | undefined, stdoutIsTTY: boolean | undefined, platform = process.platform): boolean => platform !== 'win32' && stdinIsTTY === true && stdoutIsTTY === true;
 
-const findExecutable = async (name: string, env: NodeJS.ProcessEnv): Promise<string | undefined> => {
+export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeDirectory = homedir()): Promise<string | undefined> => {
   const explicit = env[`SURPLUS_${name.toUpperCase()}_BIN`];
   if (explicit) return explicit;
-  const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? '', '.local', 'state'), 'surplus', 'bin');
+  const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? homeDirectory, '.local', 'state'), 'surplus', 'bin');
   for (const directory of (env.PATH ?? '').split(delimiter)) {
     if (!directory || directory === wrapperDir) continue;
     const path = join(directory, name);
