@@ -205,29 +205,37 @@ export const installShell = async (): Promise<void> => {
 
 export const uninstallShell = async (): Promise<void> => {
   const candidates = shellRcCandidates();
+  const failures: unknown[] = [];
+  const recordFailure = (path: string, error: unknown): void => {
+    const failure = error instanceof Error ? error : new Error('unknown error');
+    failure.message = `${path}: ${failure.message}`;
+    failures.push(failure);
+  };
   for (const path of candidates.paths) {
-    let rc: string;
-    try { rc = await readFile(path, 'utf8'); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw error;
+    try {
+      const rc = await readFile(path, 'utf8');
+      const cleaned = replaceManagedBlock(rc, '');
+      if (cleaned !== rc) await writeAtomic(path, cleaned, 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') recordFailure(path, error);
     }
-    const cleaned = replaceManagedBlock(rc, '');
-    if (cleaned !== rc) await writeAtomic(path, cleaned, 0o600);
   }
   for (const provider of ['claude', 'codex']) {
     const path = join(managedBin(), provider);
-    let contents: string;
-    try { contents = await readFile(path, 'utf8'); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw error;
-    }
-    if (contents !== wrapper(provider)) continue;
-    try { await unlink(path); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    try {
+      const contents = await readFile(path, 'utf8');
+      if (contents === wrapper(provider)) await unlink(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') recordFailure(path, error);
     }
   }
   if (candidates.zshResolutionFailed) {
-    throw new Error('Removed Surplus from known shell startup files, but could not resolve the zsh startup directory. Inspect your custom ZDOTDIR startup file manually.');
+    failures.push(new Error('Removed Surplus from known shell startup files, but could not resolve the zsh startup directory. Inspect your custom ZDOTDIR startup file manually.'));
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    const details = failures.map((error) => error instanceof Error ? error.message : 'unknown error').join('; ');
+    throw new AggregateError(failures, `Shell uninstall completed with errors: ${details}`);
   }
 };
 
