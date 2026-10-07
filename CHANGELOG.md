@@ -1,3 +1,10 @@
+## [0.1.2](https://github.com/oleg-koval/surplus/compare/v0.1.1...v0.1.2) (2026-10-07)
+
+
+### 🐛 Bug Fixes
+
+* release complete uninstall cleanup ([2284d11](https://github.com/oleg-koval/surplus/commit/2284d112d3e88417a10721b0a79d89b8b682c59a))
+
 ## [0.1.1](https://github.com/oleg-koval/surplus/compare/v0.1.0...v0.1.1) (2026-10-07)
 
 
