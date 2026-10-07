@@ -1,4 +1,5 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -90,6 +91,95 @@ describe('reversible install', () => {
       await uninstallShell();
       expect(await readFile(customRc, 'utf8')).toBe('export CUSTOM_VALUE=kept\n');
       expect(await readFile(homeRc, 'utf8')).toBe('export HOME_VALUE=untouched\n');
+    });
+  });
+
+  it('resolves an unexported ZDOTDIR set by zshenv for install and uninstall', async () => {
+    await withHome(async (home) => {
+      const zshDir = join(home, 'custom-zsh');
+      const customRc = join(zshDir, '.zshrc');
+      const homeRc = join(home, '.zshrc');
+      await mkdir(zshDir);
+      await writeFile(join(home, '.zshenv'), 'ZDOTDIR="$HOME/custom-zsh"\n');
+      await writeFile(customRc, 'export CUSTOM_VALUE=kept\n');
+      await writeFile(homeRc, 'export HOME_VALUE=untouched\n');
+
+      await installShell();
+      expect(await readFile(customRc, 'utf8')).toContain('surplus managed block');
+      expect(await readFile(homeRc, 'utf8')).toBe('export HOME_VALUE=untouched\n');
+
+      process.env.SHELL = '/bin/bash';
+      await uninstallShell();
+      expect(await readFile(customRc, 'utf8')).toBe('export CUSTOM_VALUE=kept\n');
+      expect(await readFile(homeRc, 'utf8')).toBe('export HOME_VALUE=untouched\n');
+    });
+  });
+
+  it('activates Bash login and non-login shells without shadowing profile precedence', async () => {
+    await withHome(async (home) => {
+      process.env.SHELL = '/bin/bash';
+      const bashrc = join(home, '.bashrc');
+      const bashLogin = join(home, '.bash_login');
+      const profile = join(home, '.profile');
+      const bashBin = join(home, 'state', 'surplus', 'bin');
+      await writeFile(bashrc, 'export BASHRC_VALUE=kept\n');
+      await writeFile(bashLogin, 'export BASH_LOGIN_VALUE=kept\n');
+      await writeFile(profile, 'export PROFILE_VALUE=untouched\n');
+
+      await installShell();
+      expect(await readFile(bashrc, 'utf8')).toContain('surplus managed block');
+      expect(await readFile(bashLogin, 'utf8')).toContain('surplus managed block');
+      expect(await readFile(profile, 'utf8')).toBe('export PROFILE_VALUE=untouched\n');
+      await expect(readFile(join(home, '.bash_profile'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const env = { ...process.env, HOME: home };
+      const nonLogin = spawnSync('/bin/bash', ['-ic', 'printf "%s" "$PATH"'], { encoding: 'utf8', env });
+      const login = spawnSync('/bin/bash', ['--login', '-c', 'printf "%s" "$PATH"'], { encoding: 'utf8', env });
+      expect(nonLogin.status).toBe(0);
+      expect(nonLogin.stdout).toContain(bashBin);
+      expect(login.status).toBe(0);
+      expect(login.stdout).toContain(bashBin);
+
+      await uninstallShell();
+      expect(await readFile(bashrc, 'utf8')).toBe('export BASHRC_VALUE=kept\n');
+      expect(await readFile(bashLogin, 'utf8')).toBe('export BASH_LOGIN_VALUE=kept\n');
+      expect(await readFile(profile, 'utf8')).toBe('export PROFILE_VALUE=untouched\n');
+    });
+  });
+
+  it('creates Bash login profile only when no supported profile exists', async () => {
+    await withHome(async (home) => {
+      process.env.SHELL = '/bin/bash';
+      await installShell();
+
+      expect(await readFile(join(home, '.bash_profile'), 'utf8')).toContain('surplus managed block');
+      expect(await readFile(join(home, '.bashrc'), 'utf8')).toContain('surplus managed block');
+      await expect(readFile(join(home, '.bash_login'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(home, '.profile'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
+  it('rolls back the first Bash startup write when the login profile write fails', async () => {
+    await withHome(async (home) => {
+      process.env.SHELL = '/bin/bash';
+      const bashrc = join(home, '.bashrc');
+      const profile = join(home, '.bash_profile');
+      const protectedDir = join(home, 'protected');
+      const protectedProfile = join(protectedDir, 'profile');
+      await mkdir(protectedDir);
+      await writeFile(bashrc, 'export BASHRC_VALUE=kept\n');
+      await writeFile(protectedProfile, 'export PROFILE_VALUE=kept\n');
+      await symlink(protectedProfile, profile);
+      await chmod(protectedDir, 0o500);
+
+      try {
+        await expect(installShell()).rejects.toMatchObject({ code: 'EACCES' });
+        expect(await readFile(bashrc, 'utf8')).toBe('export BASHRC_VALUE=kept\n');
+        expect(await readFile(protectedProfile, 'utf8')).toBe('export PROFILE_VALUE=kept\n');
+        await expect(readFile(join(home, 'state', 'surplus', 'bin', 'claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await chmod(protectedDir, 0o700);
+      }
     });
   });
 

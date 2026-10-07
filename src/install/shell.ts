@@ -1,5 +1,6 @@
 import { access, chmod, lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { constants } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -13,21 +14,71 @@ const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'
 const managedMarkers = (): string => `${begin}\nexport PATH=${shellQuote(managedBin())}:"$PATH"\n${end}\n`;
 const wrapper = (provider: string): string => `#!/bin/sh\nexec surplus run ${provider} "$@"\n`;
 
-const shellRc = (): string => {
+const zshStartupDirectory = (home: string): string => {
+  if (process.env.ZDOTDIR !== undefined) {
+    if (!process.env.ZDOTDIR) throw new Error('ZDOTDIR is empty; set it to a startup directory before installing or uninstalling.');
+    return process.env.ZDOTDIR;
+  }
+  const shell = process.env.SHELL ?? '';
+  const executable = shell.endsWith('/zsh') || shell === 'zsh' ? shell : 'zsh';
+  const marker = `SURPLUS_ZDOTDIR_${randomUUID().replaceAll('-', '')}`;
+  const valueMarker = `${marker}_VALUE`;
+  const command = `printf '%s' '${marker}'; printf '%s' "\${+ZDOTDIR}"; printf '%s' '${valueMarker}'; printf '%s' "\${ZDOTDIR-}"; printf '%s' '${marker}'`;
+  const result = spawnSync(executable, ['-c', command], {
+    encoding: 'buffer', timeout: 1_000, maxBuffer: 16 * 1024,
+    env: { ...process.env, HOME: home },
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error('Could not resolve zsh ZDOTDIR from its startup files; set ZDOTDIR in the environment and retry.');
+  }
+  const output = result.stdout as Buffer;
+  const boundary = Buffer.from(marker);
+  const start = output.indexOf(boundary);
+  const finish = output.lastIndexOf(boundary);
+  if (start < 0 || finish <= start || finish + boundary.length !== output.length) {
+    throw new Error('Could not safely resolve zsh ZDOTDIR output; set ZDOTDIR in the environment and retry.');
+  }
+  const details = output.subarray(start + boundary.length, finish).toString('utf8');
+  const valueBoundary = details.indexOf(valueMarker);
+  const isSet = valueBoundary >= 0 ? details.slice(0, valueBoundary) : '';
+  const configured = valueBoundary >= 0 ? details.slice(valueBoundary + valueMarker.length) : '';
+  if (isSet === '1' && !configured) throw new Error('ZDOTDIR is empty; set it to a startup directory before installing or uninstalling.');
+  if (isSet !== '0' && isSet !== '1') throw new Error('Could not safely resolve zsh ZDOTDIR output; set ZDOTDIR in the environment and retry.');
+  return configured || home;
+};
+
+const firstExistingBashLoginRc = async (home: string): Promise<string> => {
+  for (const name of ['.bash_profile', '.bash_login', '.profile']) {
+    const path = join(home, name);
+    try {
+      await lstat(path);
+      await readFile(path, 'utf8');
+      return path;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return join(home, '.bash_profile');
+};
+
+const shellRcs = async (): Promise<readonly string[]> => {
   const shell = process.env.SHELL ?? '';
   const home = process.env.HOME ?? homedir();
-  if (shell.endsWith('/zsh')) return join(process.env.ZDOTDIR ?? home, '.zshrc');
-  if (shell.endsWith('/bash')) return join(home, process.platform === 'darwin' ? '.bash_profile' : '.bashrc');
+  if (shell.endsWith('/zsh')) return [join(zshStartupDirectory(home), '.zshrc')];
+  if (shell.endsWith('/bash')) return [join(home, '.bashrc'), await firstExistingBashLoginRc(home)];
   throw new Error('Surplus supports zsh and bash installation. Run `surplus run <provider>` directly for other shells.');
 };
 
 const shellRcCandidates = (): readonly string[] => {
   const home = process.env.HOME ?? homedir();
-  const zshDirectories = process.env.ZDOTDIR ? [process.env.ZDOTDIR, home] : [home];
+  const zshDirectory = zshStartupDirectory(home);
+  const zshDirectories = [zshDirectory, home];
   return [...new Set([
     ...zshDirectories.map((directory) => join(directory, '.zshrc')),
-    join(home, '.bash_profile'),
     join(home, '.bashrc'),
+    join(home, '.bash_profile'),
+    join(home, '.bash_login'),
+    join(home, '.profile'),
   ])];
 };
 
@@ -70,7 +121,7 @@ const writeAtomic = async (path: string, contents: string, requestedMode: number
 
 export const installShell = async (): Promise<void> => {
   const bin = managedBin();
-  const rc = shellRc();
+  const rcs = await shellRcs();
   const wrappersToCreate: string[] = [];
   for (const provider of ['claude', 'codex']) {
     const path = join(bin, provider);
@@ -82,22 +133,38 @@ export const installShell = async (): Promise<void> => {
       wrappersToCreate.push(path);
     }
   }
-  let source = '';
-  try { source = await readFile(rc, 'utf8'); } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  const result = replaceManagedBlock(source, managedMarkers());
+  const rcChanges = await Promise.all(rcs.map(async (path) => {
+    let source: string | undefined;
+    try { source = await readFile(path, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const result = replaceManagedBlock(source ?? '', managedMarkers());
+    return { path, source, result };
+  }));
   await mkdir(bin, { recursive: true, mode: 0o700 });
   const created: string[] = [];
+  const writtenRcs: typeof rcChanges[number][] = [];
   try {
     for (const path of wrappersToCreate) {
       const provider = path.slice(path.lastIndexOf('/') + 1);
       await writeAtomic(path, wrapper(provider), 0o755);
       created.push(path);
     }
-    if (result !== source) await writeAtomic(rc, result, 0o600);
+    for (const change of rcChanges) {
+      if (change.result === change.source) continue;
+      await writeAtomic(change.path, change.result, 0o600);
+      writtenRcs.push(change);
+    }
   } catch (error) {
     const rollbackFailures: unknown[] = [];
+    for (const change of writtenRcs.reverse()) {
+      try {
+        if (change.source !== undefined) await writeAtomic(change.path, change.source, 0o600);
+        else if (await readFile(change.path, 'utf8') === change.result) await unlink(change.path);
+      } catch (rollbackError) {
+        if ((rollbackError as NodeJS.ErrnoException).code !== 'ENOENT') rollbackFailures.push(rollbackError);
+      }
+    }
     for (const path of created) {
       const provider = path.slice(path.lastIndexOf('/') + 1);
       try {

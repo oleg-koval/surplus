@@ -21,6 +21,8 @@ Open a new terminal. Then use `claude` or `codex` as usual. Surplus installs sma
 
 Surplus honors Claude Code's `CLAUDE_CONFIG_DIR` when reading or updating `settings.json`. Its statusline backup is bound to that exact settings path, so use the same `CLAUDE_CONFIG_DIR` value when uninstalling; Surplus refuses to restore a backup into a different profile.
 
+For zsh, install uses the effective `$ZDOTDIR/.zshrc` (including a value assigned in `.zshenv`). Uninstall checks the current ZDOTDIR and HOME startup files; if you change ZDOTDIR after installing, set it to the original directory when uninstalling.
+
 The first Claude session after install only seeds its local reading after Claude returns rate-limit data. Surplus needs that reading before it can make an automatic choice. Codex usage is read live from Codex's local app-server.
 
 To install command wrappers without changing Claude's statusline, use `surplus install --no-claude-capture`. Claude automatic selection then remains unavailable until a captured sample exists.
