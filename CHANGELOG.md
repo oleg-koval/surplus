@@ -1,3 +1,11 @@
+## [0.1.1](https://github.com/oleg-koval/surplus/compare/v0.1.0...v0.1.1) (2026-10-07)
+
+
+### ⚙️ Continuous Integrations
+
+* publish to npm with trusted publishing ([bf7ad2c](https://github.com/oleg-koval/surplus/commit/bf7ad2c9cfa0f122de248d9d0121604f6c51d37f))
+* publish to npm with trusted publishing ([54dfb1e](https://github.com/oleg-koval/surplus/commit/54dfb1ee6c3f2deb1489ac5e3302bd02c9362251))
+
 # [0.1.0](https://github.com/oleg-koval/surplus/compare/v0.0.0...v0.1.0) (2026-10-07)
 
 
