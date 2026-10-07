@@ -12,8 +12,9 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
   if (cliArgs.some((arg) => ['--model', '-m', '--effort', '--profile', '-p'].includes(arg) || arg.startsWith('--model=') || arg.startsWith('--effort=') || /^-[mp].+/.test(arg))) return true;
   if (cliArgs.some((arg) => ['--json', '--output-format', '--output-format=json', '--output-format=stream-json', '--version', '-v', '-V', '--help', '-h'].includes(arg))) return true;
   if (provider === 'claude') {
-    return ['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm'].includes(cliArgs[0] ?? '')
-      || cliArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings'].includes(arg) || arg.startsWith('--resume=') || arg.startsWith('--cloud='));
+    const utilities = new Set(['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm', 'auto-mode', 'gateway', 'daemon', 'desktop', 'import', 'project', 'respawn', 'ultrareview', 'teleport']);
+    return cliArgs.some((arg) => utilities.has(arg))
+      || cliArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--environment', '--exec', '--desktop', '--bare', '--debug', '-d', '--verbose', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings'].includes(arg) || arg.startsWith('--resume=') || arg.startsWith('--cloud=') || arg.startsWith('--environment='));
   }
   if (cliArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg) || arg.startsWith('--local-provider=') || arg.startsWith('--remote=') || arg.startsWith('--remote-auth-token-env='))) return true;
   if (cliArgs.some((arg) => ['--config', '-c', '--worktree', '-C', '--cd'].includes(arg) || arg.startsWith('--config=') || arg.startsWith('--cd=') || /^-C.+/.test(arg))) return true;

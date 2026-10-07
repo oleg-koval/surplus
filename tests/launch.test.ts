@@ -3,7 +3,7 @@ import { appendEffort, appendModel, hasExplicitOverride, shouldAutomaticallyRout
 
 describe('launch argument preservation', () => {
   it('does not override explicit model, profile, effort, or scripted invocation choices', () => {
-    for (const args of [['--model', 'sonnet'], ['-mopus'], ['--effort=low'], ['--resume', 'id'], ['--print'], ['--settings', 'x.json']]) {
+    for (const args of [['--model', 'sonnet'], ['-mopus'], ['--effort=low'], ['--resume', 'id'], ['--print'], ['--settings', 'x.json'], ['--environment', 'local'], ['--exec', 'prompt'], ['--desktop'], ['auto-mode'], ['--debug', 'gateway']]) {
       expect(hasExplicitOverride('claude', args)).toBe(true);
     }
     for (const args of [['--model', 'gpt'], ['-p', 'work'], ['--config', 'model="gpt"'], ['exec', 'prompt']]) {

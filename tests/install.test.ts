@@ -2,6 +2,7 @@ import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { main } from '../src/cli.js';
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
 
 const tempHomes: string[] = [];
@@ -89,6 +90,50 @@ describe('reversible install', () => {
       await symlink(join(home, 'missing-startup-file'), rc);
       await expect(installShell()).rejects.toThrow();
       expect((await lstat(rc)).isSymbolicLink()).toBe(true);
+    });
+  });
+
+  it('preflights shell support and wrapper collisions before writing any install files', async () => {
+    await withHome(async (home) => {
+      const bin = join(home, 'state/surplus/bin');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(bin, { recursive: true }));
+      const codexWrapper = join(bin, 'codex');
+      await writeFile(codexWrapper, 'user-owned codex wrapper');
+      await expect(installShell()).rejects.toThrow(/Refusing to overwrite/);
+      await expect(readFile(join(bin, 'claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(join(home, '.zshrc'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(codexWrapper, 'utf8')).toBe('user-owned codex wrapper');
+    });
+  });
+
+  it('leaves a fresh shell untouched when Claude capture settings are malformed', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      const shell = join(home, '.zshrc');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      await writeFile(settings, '{broken');
+      await expect(main(['install'])).rejects.toThrow(/malformed|JSON/);
+      await expect(readFile(join(home, 'state/surplus/bin/claude'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(shell, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(settings, 'utf8')).toBe('{broken');
+    });
+  });
+
+  it('preserves a preexisting Surplus shell installation when capture settings are unsupported', async () => {
+    await withHome(async (home) => {
+      await installShell();
+      const shell = join(home, '.zshrc');
+      const wrapperPath = join(home, 'state/surplus/bin/claude');
+      const originalShell = await readFile(shell, 'utf8');
+      const originalWrapper = await readFile(wrapperPath, 'utf8');
+      const settings = join(home, '.claude', 'settings.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      const unsupported = JSON.stringify({ statusLine: { type: 'hook', command: 'user-hook' } });
+      await writeFile(settings, unsupported);
+      await expect(main(['install'])).rejects.toThrow(/command statusline/);
+      expect(await readFile(shell, 'utf8')).toBe(originalShell);
+      expect(await readFile(wrapperPath, 'utf8')).toBe(originalWrapper);
+      expect(await readFile(settings, 'utf8')).toBe(unsupported);
     });
   });
 });

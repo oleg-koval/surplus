@@ -50,7 +50,8 @@ const writeAtomic = async (path: string, contents: string, requestedMode: number
 
 export const installShell = async (): Promise<void> => {
   const bin = managedBin();
-  await mkdir(bin, { recursive: true, mode: 0o700 });
+  const rc = shellRc();
+  const wrappersToCreate: string[] = [];
   for (const provider of ['claude', 'codex']) {
     const path = join(bin, provider);
     try {
@@ -58,16 +59,30 @@ export const installShell = async (): Promise<void> => {
       if (current !== wrapper(provider)) throw new Error(`Refusing to overwrite an existing ${path}.`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      await writeAtomic(path, wrapper(provider), 0o755);
+      wrappersToCreate.push(path);
     }
   }
-  const rc = shellRc();
   let source = '';
   try { source = await readFile(rc, 'utf8'); } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const result = replaceManagedBlock(source, managedMarkers());
-  if (result !== source) await writeAtomic(rc, result, 0o600);
+  await mkdir(bin, { recursive: true, mode: 0o700 });
+  const created: string[] = [];
+  try {
+    for (const path of wrappersToCreate) {
+      const provider = path.slice(path.lastIndexOf('/') + 1);
+      await writeAtomic(path, wrapper(provider), 0o755);
+      created.push(path);
+    }
+    if (result !== source) await writeAtomic(rc, result, 0o600);
+  } catch (error) {
+    for (const path of created) {
+      const provider = path.slice(path.lastIndexOf('/') + 1);
+      try { if (await readFile(path, 'utf8') === wrapper(provider)) await unlink(path); } catch { /* Preserve any file changed during rollback. */ }
+    }
+    throw error;
+  }
 };
 
 export const uninstallShell = async (): Promise<void> => {
@@ -87,7 +102,7 @@ export const statuslineCommand = (originalCommand?: string): string => {
   return originalCommand ? `${cli} --original=${Buffer.from(originalCommand).toString('base64')}` : cli;
 };
 
-export const installClaudeStatusLine = async (): Promise<void> => {
+export const installClaudeStatusLine = async (): Promise<boolean> => {
   const settingsPath = claudeSettingsPath();
   let settings: Record<string, unknown> = {};
   try {
@@ -108,15 +123,16 @@ export const installClaudeStatusLine = async (): Promise<void> => {
     const saved: unknown = JSON.parse(await readFile(path, 'utf8')) as unknown;
     if (typeof saved === 'object' && saved !== null && !Array.isArray(saved)
       && typeof (saved as Record<string, unknown>).managedCommand === 'string'
-      && existingCommand === (saved as Record<string, string>).managedCommand) return;
+      && existingCommand === (saved as Record<string, string>).managedCommand) return false;
   } catch { /* A fresh install records the current user statusline below. */ }
   const managedCommand = statuslineCommand(existingCommand);
   const currentObject = current as Record<string, unknown> | undefined;
-  if (currentObject?.command === managedCommand) return;
+  if (currentObject?.command === managedCommand) return false;
   const backup = { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand };
   await writeAtomic(path, `${JSON.stringify(backup, null, 2)}\n`, 0o600);
   settings.statusLine = { ...(currentObject ?? {}), type: 'command', command: managedCommand };
   await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
+  return true;
 };
 
 export const uninstallClaudeStatusLine = async (): Promise<void> => {

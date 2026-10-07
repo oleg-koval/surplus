@@ -174,8 +174,12 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
   if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usageText); return; }
   if (command === 'capture' && first === 'claude') { await runStatusLine(rest); return; }
   if (command === 'install') {
-    await installShell();
-    if (first !== '--no-claude-capture' && !rest.includes('--no-claude-capture')) await installClaudeStatusLine();
+    const captureInstalled = first !== '--no-claude-capture' && !rest.includes('--no-claude-capture')
+      ? await installClaudeStatusLine() : false;
+    try { await installShell(); } catch (error) {
+      if (captureInstalled) await uninstallClaudeStatusLine();
+      throw error;
+    }
     process.stdout.write('Surplus installed. Open a new terminal to activate Claude Code and Codex wrappers.\n');
     return;
   }
