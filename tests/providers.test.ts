@@ -1,5 +1,9 @@
+import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseClaudeStatusLine } from '../src/providers/claude.js';
+import { parseClaudeStatusLine, readClaudeIdentityHash } from '../src/providers/claude.js';
 import { codexLimitSnapshot, codexWindows, selectEffectiveCodexModel } from '../src/providers/codex.js';
 import { codexUpgradeConfig } from '../src/core/codex-policy.js';
 import { defaultConfig } from '../src/core/files.js';
@@ -20,6 +24,25 @@ describe('Claude statusline telemetry', () => {
   it('rejects missing or out-of-range provider values', () => {
     expect(parseClaudeStatusLine({ rate_limits: { seven_day: { used_percentage: 20, resets_at: 1 } } }, now)).toBeUndefined();
     expect(parseClaudeStatusLine({ rate_limits: { five_hour: { used_percentage: 120, resets_at: 1 }, seven_day: { used_percentage: 20, resets_at: 1 } } }, now)).toBeUndefined();
+  });
+
+  it('skips a directory named claude and reads identity from the real executable later in PATH', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-claude-auth-'));
+    try {
+      const directoryBin = join(fixture, 'directory-bin');
+      const providerBin = join(fixture, 'provider-bin');
+      await Promise.all([mkdir(join(directoryBin, 'claude'), { recursive: true }), mkdir(providerBin)]);
+      const identity = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', email: 'Fixture@Example.test', orgId: 'org-1', subscriptionType: 'pro' };
+      const executable = join(providerBin, 'claude');
+      await writeFile(executable, `#!/bin/sh\nprintf '%s' '${JSON.stringify(identity)}'\n`);
+      await chmod(executable, 0o755);
+
+      const identityHash = readClaudeIdentityHash({ PATH: [directoryBin, providerBin].join(':'), HOME: fixture });
+
+      expect(identityHash).toBe(createHash('sha256').update('fixture@example.test\norg-1\npro').digest('hex'));
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 });
 

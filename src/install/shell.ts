@@ -277,7 +277,12 @@ export const uninstallClaudeStatusLine = async (): Promise<void> => {
   const ownedCommand = backup.managedCommand;
   if (typeof current !== 'object' || current === null || Array.isArray(current)
     || (current as Record<string, unknown>).type !== 'command'
-    || (current as Record<string, unknown>).command !== ownedCommand) return;
+    || (current as Record<string, unknown>).command !== ownedCommand) {
+    try { await unlink(backupPath); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    return;
+  }
   if (backup.present) {
     const prior = backup.value;
     if (typeof prior === 'object' && prior !== null && !Array.isArray(prior)) {
@@ -302,11 +307,15 @@ export const uninstallClaudeStatusLine = async (): Promise<void> => {
   await unlink(backupPath);
 };
 
-export const surplusExecutable = async (): Promise<string | undefined> => {
-  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+export const surplusExecutable = async (env = process.env): Promise<string | undefined> => {
+  for (const directory of (env.PATH ?? '').split(delimiter)) {
     if (!directory) continue;
     const path = join(directory, 'surplus');
-    try { await access(path, constants.X_OK); return path; } catch { /* Search the next PATH directory. */ }
+    try {
+      if (!(await stat(path)).isFile()) continue;
+      await access(path, constants.X_OK);
+      return path;
+    } catch { /* Search the next PATH directory. */ }
   }
   return undefined;
 };

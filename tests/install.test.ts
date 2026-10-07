@@ -1,10 +1,10 @@
-import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
 import { configPath, defaultConfig, saveConfig } from '../src/core/files.js';
-import { installClaudeStatusLine, installShell, statuslineCommand, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
+import { installClaudeStatusLine, installShell, statuslineCommand, surplusExecutable, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
 
 const tempHomes: string[] = [];
 const withHome = async (run: (home: string) => Promise<void>): Promise<void> => {
@@ -26,6 +26,19 @@ afterEach(async () => {
 });
 
 describe('reversible install', () => {
+  it('skips a directory named surplus and finds the executable later in PATH', async () => {
+    await withHome(async (home) => {
+      const directoryBin = join(home, 'directory-bin');
+      const providerBin = join(home, 'provider-bin');
+      await Promise.all([mkdir(join(directoryBin, 'surplus'), { recursive: true }), mkdir(providerBin)]);
+      const executable = join(providerBin, 'surplus');
+      await writeFile(executable, '#!/bin/sh\nexit 0\n');
+      await chmod(executable, 0o755);
+
+      expect(await surplusExecutable({ PATH: [directoryBin, providerBin].join(':') })).toBe(executable);
+    });
+  });
+
   it('quotes metacharacters, is idempotent, and preserves user edits during uninstall', async () => {
     await withHome(async (home) => {
       const rc = join(home, '.zshrc');
@@ -187,6 +200,34 @@ describe('reversible install', () => {
       process.env.CLAUDE_CONFIG_DIR = configDir;
       await uninstallClaudeStatusLine();
       expect(JSON.parse(await readFile(settings, 'utf8'))).toEqual({ statusLine: original });
+    });
+  });
+
+  it('clears stale ownership after a user edit so a new Claude profile can be installed', async () => {
+    await withHome(async (home) => {
+      const firstConfig = join(home, 'first profile');
+      const firstSettings = join(firstConfig, 'settings.json');
+      const backupPath = join(home, 'state/surplus/claude-statusline-backup.json');
+      process.env.CLAUDE_CONFIG_DIR = firstConfig;
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(firstConfig, { recursive: true }));
+      const original = { type: 'command', command: 'echo original' };
+      await writeFile(firstSettings, JSON.stringify({ statusLine: original }));
+      await installClaudeStatusLine();
+
+      const userEdit = { type: 'command', command: 'echo my-statusline', padding: 12 };
+      await writeFile(firstSettings, JSON.stringify({ statusLine: userEdit }));
+      await uninstallClaudeStatusLine();
+      expect(JSON.parse(await readFile(firstSettings, 'utf8'))).toEqual({ statusLine: userEdit });
+      await expect(readFile(backupPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const secondConfig = join(home, 'second profile');
+      const secondSettings = join(secondConfig, 'settings.json');
+      process.env.CLAUDE_CONFIG_DIR = secondConfig;
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(secondConfig, { recursive: true }));
+      await writeFile(secondSettings, JSON.stringify({ statusLine: original }));
+      await expect(installClaudeStatusLine()).resolves.toBe(true);
+      await uninstallClaudeStatusLine();
+      expect(JSON.parse(await readFile(secondSettings, 'utf8'))).toEqual({ statusLine: original });
     });
   });
 

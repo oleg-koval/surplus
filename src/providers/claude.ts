@@ -2,8 +2,8 @@ import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { delimiter, join } from 'node:path';
-import { constants } from 'node:fs';
-import { accessSync } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import type { UsageSnapshot } from '../core/types.js';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
@@ -34,9 +34,13 @@ export const readStatusLineInput = async (): Promise<unknown> => {
 
 export const readClaudeIdentityHash = (env = process.env): string | undefined => {
   const configuredBin = env.SURPLUS_CLAUDE_BIN;
-  const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? '', '.local', 'state'), 'surplus', 'bin');
+  const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? homedir(), '.local', 'state'), 'surplus', 'bin');
   const executable = configuredBin ?? (env.PATH ?? '').split(delimiter).filter((directory) => directory !== wrapperDir).map((directory) => join(directory, 'claude')).find((path) => {
-    try { accessSync(path, constants.X_OK); return true; } catch { return false; }
+    try {
+      if (!statSync(path).isFile()) return false;
+      accessSync(path, constants.X_OK);
+      return true;
+    } catch { return false; }
   });
   if (!executable) return undefined;
   const result = spawnSync(executable, ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 2_000, env });
