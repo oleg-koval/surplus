@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,16 +31,25 @@ describe('Claude statusline telemetry', () => {
     const fixture = await mkdtemp(join(tmpdir(), 'surplus-claude-auth-'));
     try {
       const directoryBin = join(fixture, 'directory-bin');
+      const managedBin = join(fixture, '.local', 'state', 'surplus', 'bin');
+      const managedBinAlias = join(fixture, 'managed-bin-alias');
+      const fileAliasBin = join(fixture, 'file-alias-bin');
       const providerBin = join(fixture, 'provider-bin');
-      await Promise.all([mkdir(join(directoryBin, 'claude'), { recursive: true }), mkdir(providerBin)]);
+      await Promise.all([mkdir(join(directoryBin, 'claude'), { recursive: true }), mkdir(managedBin, { recursive: true }), mkdir(fileAliasBin), mkdir(providerBin)]);
       const identity = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', email: 'Fixture@Example.test', orgId: 'org-1', subscriptionType: 'pro' };
+      const managedWrapper = join(managedBin, 'claude');
+      await writeFile(managedWrapper, '#!/bin/sh\nexit 99\n');
+      await chmod(managedWrapper, 0o755);
+      await symlink(managedBin, managedBinAlias, 'dir');
+      await symlink(managedWrapper, join(fileAliasBin, 'claude'));
       const executable = join(providerBin, 'claude');
       await writeFile(executable, `#!/bin/sh\nprintf '%s' '${JSON.stringify(identity)}'\n`);
       await chmod(executable, 0o755);
 
-      const identityHash = readClaudeIdentityHash({ PATH: [directoryBin, providerBin].join(':'), HOME: fixture });
+      const identityHash = readClaudeIdentityHash({ PATH: [fileAliasBin, `${managedBin}/`, managedBinAlias, directoryBin, providerBin].join(':'), HOME: fixture });
 
       expect(identityHash).toBe(createHash('sha256').update('fixture@example.test\norg-1\npro').digest('hex'));
+      expect(readClaudeIdentityHash({ SURPLUS_CLAUDE_BIN: join(fileAliasBin, 'claude'), HOME: fixture })).toBeUndefined();
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }

@@ -1,8 +1,8 @@
 import { createInterface } from 'node:readline';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { delimiter, join } from 'node:path';
-import { accessSync, constants, statSync } from 'node:fs';
+import { delimiter, join, resolve } from 'node:path';
+import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import type { UsageSnapshot } from '../core/types.js';
 
@@ -35,9 +35,16 @@ export const readStatusLineInput = async (): Promise<unknown> => {
 export const readClaudeIdentityHash = (env = process.env): string | undefined => {
   const configuredBin = env.SURPLUS_CLAUDE_BIN;
   const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? homedir(), '.local', 'state'), 'surplus', 'bin');
-  const executable = configuredBin ?? (env.PATH ?? '').split(delimiter).filter((directory) => directory !== wrapperDir).map((directory) => join(directory, 'claude')).find((path) => {
+  const canonicalPath = (path: string): string => {
+    try { return realpathSync(path); } catch { return resolve(path); }
+  };
+  const managedExecutable = canonicalPath(join(wrapperDir, 'claude'));
+  if (configuredBin && canonicalPath(configuredBin) === managedExecutable) return undefined;
+  const canonicalWrapperDir = canonicalPath(wrapperDir);
+  const executable = configuredBin ?? (env.PATH ?? '').split(delimiter).filter((directory) => directory && canonicalPath(directory) !== canonicalWrapperDir).map((directory) => join(directory, 'claude')).find((path) => {
     try {
       if (!statSync(path).isFile()) return false;
+      if (canonicalPath(path) === managedExecutable) return false;
       accessSync(path, constants.X_OK);
       return true;
     } catch { return false; }

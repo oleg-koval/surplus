@@ -1,7 +1,7 @@
-import { access, stat } from 'node:fs/promises';
+import { access, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { constants as osConstants, homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Provider } from './types.js';
 
@@ -79,13 +79,24 @@ export const shouldAutomaticallyRoute = (stdinIsTTY: boolean | undefined, stdout
 
 export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeDirectory = homedir()): Promise<string | undefined> => {
   const explicit = env[`SURPLUS_${name.toUpperCase()}_BIN`];
-  if (explicit) return explicit;
   const wrapperDir = join(env.XDG_STATE_HOME ?? join(env.HOME ?? homeDirectory, '.local', 'state'), 'surplus', 'bin');
+  const canonicalPath = async (path: string): Promise<string> => {
+    try { return await realpath(path); } catch { return resolve(path); }
+  };
+  const managedExecutable = await canonicalPath(join(wrapperDir, name));
+  if (explicit) {
+    if (await canonicalPath(explicit) === managedExecutable) {
+      throw new Error(`SURPLUS_${name.toUpperCase()}_BIN points to Surplus's managed wrapper; set it to the original provider executable.`);
+    }
+    return explicit;
+  }
+  const canonicalWrapperDir = await canonicalPath(wrapperDir);
   for (const directory of (env.PATH ?? '').split(delimiter)) {
-    if (!directory || directory === wrapperDir) continue;
+    if (!directory || await canonicalPath(directory) === canonicalWrapperDir) continue;
     const path = join(directory, name);
     try {
       if (!(await stat(path)).isFile()) continue;
+      if (await canonicalPath(path) === managedExecutable) continue;
       await access(path, constants.X_OK);
       return path;
     } catch { /* Search the next PATH directory. */ }

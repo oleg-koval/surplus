@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendEffort, appendModel, findExecutable, hasExplicitOverride, shouldAutomaticallyRoute } from '../src/core/launch.js';
@@ -10,18 +10,23 @@ describe('provider executable lookup', () => {
     try {
       const home = join(fixture, 'home');
       const managedBin = join(home, '.local', 'state', 'surplus', 'bin');
+      const managedBinAlias = join(fixture, 'managed-bin-alias');
+      const fileAliasBin = join(fixture, 'file-alias-bin');
       const providerBin = join(fixture, 'provider-bin');
-      await Promise.all([mkdir(managedBin, { recursive: true }), mkdir(providerBin)]);
+      await Promise.all([mkdir(managedBin, { recursive: true }), mkdir(fileAliasBin), mkdir(providerBin)]);
       const managedWrapper = join(managedBin, 'codex');
       const realProvider = join(providerBin, 'codex');
       await writeFile(managedWrapper, '#!/bin/sh\nexit 99\n');
       await chmod(managedWrapper, 0o755);
       await writeFile(realProvider, '#!/bin/sh\nexit 0\n');
       await chmod(realProvider, 0o755);
+      await symlink(managedBin, managedBinAlias, 'dir');
+      await symlink(managedWrapper, join(fileAliasBin, 'codex'));
 
-      const found = await findExecutable('codex', { PATH: [managedBin, providerBin].join(':') }, home);
+      const found = await findExecutable('codex', { PATH: [fileAliasBin, `${managedBin}/`, managedBinAlias, providerBin].join(':') }, home);
 
       expect(found).toBe(realProvider);
+      await expect(findExecutable('codex', { SURPLUS_CODEX_BIN: join(fileAliasBin, 'codex') }, home)).rejects.toThrow(/managed wrapper/);
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }
