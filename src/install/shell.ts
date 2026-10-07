@@ -206,13 +206,18 @@ export const installShell = async (): Promise<void> => {
 export const uninstallShell = async (): Promise<void> => {
   const candidates = shellRcCandidates();
   const failures: unknown[] = [];
+  const recordFailure = (path: string, error: unknown): void => {
+    const failure = error instanceof Error ? error : new Error('unknown error');
+    failure.message = `${path}: ${failure.message}`;
+    failures.push(failure);
+  };
   for (const path of candidates.paths) {
     try {
       const rc = await readFile(path, 'utf8');
       const cleaned = replaceManagedBlock(rc, '');
       if (cleaned !== rc) await writeAtomic(path, cleaned, 0o600);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') failures.push(error);
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') recordFailure(path, error);
     }
   }
   for (const provider of ['claude', 'codex']) {
@@ -221,7 +226,7 @@ export const uninstallShell = async (): Promise<void> => {
       const contents = await readFile(path, 'utf8');
       if (contents === wrapper(provider)) await unlink(path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') failures.push(error);
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') recordFailure(path, error);
     }
   }
   if (candidates.zshResolutionFailed) {

@@ -372,10 +372,27 @@ describe('reversible install', () => {
       const damaged = (await readFile(bashrc, 'utf8')).replace('# <<< surplus managed block <<<', '');
       await writeFile(bashrc, damaged);
 
-      await expect(uninstallShell()).rejects.toThrow();
+      await expect(uninstallShell()).rejects.toThrow(bashrc);
 
       expect(await readFile(bashrc, 'utf8')).toBe(damaged);
       expect(await readFile(join(home, '.bash_profile'), 'utf8')).toBe('');
+      for (const provider of ['claude', 'codex']) {
+        await expect(readFile(join(home, 'state/surplus/bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+  });
+
+  it('identifies each damaged startup file in an aggregate uninstall error', async () => {
+    await withHome(async (home) => {
+      process.env.SHELL = '/bin/bash';
+      await installShell();
+      const paths = [join(home, '.bashrc'), join(home, '.bash_profile')];
+      for (const path of paths) {
+        await writeFile(path, (await readFile(path, 'utf8')).replace('# <<< surplus managed block <<<', ''));
+      }
+      const failure = await uninstallShell().catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      for (const path of paths) expect((failure as AggregateError).message).toContain(path);
       for (const provider of ['claude', 'codex']) {
         await expect(readFile(join(home, 'state/surplus/bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       }
