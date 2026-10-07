@@ -218,8 +218,14 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
     return;
   }
   if (command === 'uninstall') {
-    await uninstallClaudeStatusLine();
-    await uninstallShell();
+    const failures: unknown[] = [];
+    for (const operation of [uninstallClaudeStatusLine, uninstallShell]) {
+      try { await operation(); } catch (error) { failures.push(error); }
+    }
+    if (failures.length > 0) {
+      const details = failures.map((error) => error instanceof Error ? error.message : 'unknown error').join('; ');
+      throw new AggregateError(failures, `Uninstall completed with errors: ${details}`);
+    }
     process.stdout.write('Surplus wrappers removed; edited user files and wrappers were left in place.\n');
     return;
   }

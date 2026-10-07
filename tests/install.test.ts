@@ -564,27 +564,27 @@ describe('reversible install', () => {
     });
   });
 
-  it('fails uninstall visibly when Claude settings are malformed, before shell cleanup', async () => {
+  it('reports malformed Claude settings after still cleaning shell integration', async () => {
     await withHome(async (home) => {
       const settings = join(home, '.claude', 'settings.json');
       const shell = join(home, '.zshrc');
       await installClaudeStatusLine();
       await installShell();
       await writeFile(settings, '{broken');
-      await expect(main(['uninstall'])).rejects.toThrow(/Claude settings.json is malformed/);
-      expect(await readFile(shell, 'utf8')).toContain('surplus managed block');
+      await expect(main(['uninstall'])).rejects.toThrow(/Uninstall completed with errors: Claude settings.json is malformed/);
+      expect(await readFile(shell, 'utf8')).toBe('');
     });
   });
 
-  it('fails uninstall visibly when the Claude backup is malformed, before shell cleanup', async () => {
+  it('reports a malformed Claude backup after still cleaning shell integration', async () => {
     await withHome(async (home) => {
       const backup = join(home, 'state/surplus/claude-statusline-backup.json');
       const shell = join(home, '.zshrc');
       await installClaudeStatusLine();
       await installShell();
       await writeFile(backup, '{broken');
-      await expect(main(['uninstall'])).rejects.toThrow(/backup is malformed/);
-      expect(await readFile(shell, 'utf8')).toContain('surplus managed block');
+      await expect(main(['uninstall'])).rejects.toThrow(/Uninstall completed with errors: Surplus Claude statusline backup is malformed/);
+      expect(await readFile(shell, 'utf8')).toBe('');
     });
   });
 
