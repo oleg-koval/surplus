@@ -8,6 +8,8 @@ Surplus watches the included usage windows exposed by Claude Code and Codex CLI.
 
 Requires Node.js 20.10 or newer, plus Claude Code and/or Codex CLI.
 
+Codex usage and model discovery were verified with Codex CLI 0.160.1 and its app-server protocol. Older Codex clients that do not expose the required protocol fields safely keep their normal settings.
+
 ```sh
 npm install --global https://github.com/oleg-koval/surplus/releases/download/v0.1.0/surplus-cli-0.1.0.tgz
 surplus install

@@ -72,6 +72,33 @@ describe('reversible install', () => {
     });
   });
 
+  it('refreshes an owned Claude statusline wrapper while retaining its original command and user fields', async () => {
+    await withHome(async (home) => {
+      const settingsPath = join(home, '.claude', 'settings.json');
+      const backupPath = join(home, 'state/surplus/claude-statusline-backup.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      const original = { type: 'command', command: 'original-user-statusline', padding: 8 };
+      await writeFile(settingsPath, JSON.stringify({ statusLine: original }));
+      await installClaudeStatusLine();
+      const firstBackup = JSON.parse(await readFile(backupPath, 'utf8')) as { present: boolean; value: unknown; managedCommand: string };
+      const oldInstalledCommand = '/old/node /old/prefix/cli.js capture claude --original=b2xk';
+      await writeFile(backupPath, JSON.stringify({ ...firstBackup, managedCommand: oldInstalledCommand }));
+      await writeFile(settingsPath, JSON.stringify({ statusLine: { type: 'command', command: oldInstalledCommand, padding: 16, localEdit: true } }));
+
+      expect(await installClaudeStatusLine()).toBe(true);
+      const reinstalled = JSON.parse(await readFile(settingsPath, 'utf8')) as { statusLine: Record<string, unknown> };
+      const savedBackup = JSON.parse(await readFile(backupPath, 'utf8')) as { present: boolean; value: unknown; managedCommand: string };
+      expect(reinstalled.statusLine.command).not.toBe(oldInstalledCommand);
+      expect(reinstalled.statusLine).toMatchObject({ padding: 16, localEdit: true });
+      expect(savedBackup.value).toEqual(original);
+      expect(savedBackup.managedCommand).toBe(reinstalled.statusLine.command);
+
+      await uninstallClaudeStatusLine();
+      const restored = JSON.parse(await readFile(settingsPath, 'utf8')) as { statusLine: Record<string, unknown> };
+      expect(restored.statusLine).toEqual({ ...original, padding: 16, localEdit: true });
+    });
+  });
+
   it('restores only owned Claude statusline fields and keeps later padding edits', async () => {
     await withHome(async (home) => {
       const settings = join(home, '.claude', 'settings.json');

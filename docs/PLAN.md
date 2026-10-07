@@ -27,7 +27,7 @@ Use available included coding-assistant allowance before a weekly reset by selec
 - Unit tests cover reset boundaries, stale/missing inputs, available and absent short-window data, reserve and hysteresis behavior, telemetry parsing, override preservation, and install/uninstall ownership.
 - CI runs strict typecheck, lint, tests, and build on supported Node.js.
 - `npm pack` installs into a clean fixture and starts the bundled CLI.
-- Live protocol smoke reads Codex metadata only; no model turn is sent.
+- Live protocol smoke reads Codex metadata only; no model turn is sent. The verified Codex CLI baseline is 0.160.1; older clients missing required fields safely retain their normal settings.
 - Launch materials distinguish actual release/download/star evidence from targets and hypotheses.
 
 ## Deferred

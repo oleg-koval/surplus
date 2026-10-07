@@ -129,16 +129,35 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   if (current !== undefined && (typeof current !== 'object' || current === null || Array.isArray(current) || (current as Record<string, unknown>).type !== 'command' || !existingCommand)) {
     throw new Error('Surplus can only chain a Claude command statusline; preserve other statusline types manually.');
   }
+  let previous: { readonly present?: boolean; readonly value?: unknown; readonly managedCommand?: string } | undefined;
   try {
     const saved: unknown = JSON.parse(await readFile(path, 'utf8')) as unknown;
-    if (typeof saved === 'object' && saved !== null && !Array.isArray(saved)
-      && typeof (saved as Record<string, unknown>).managedCommand === 'string'
-      && existingCommand === (saved as Record<string, string>).managedCommand) return false;
-  } catch { /* A fresh install records the current user statusline below. */ }
-  const managedCommand = statuslineCommand(existingCommand);
+    if (typeof saved === 'object' && saved !== null && !Array.isArray(saved)) {
+      const row = saved as Record<string, unknown>;
+      if (typeof row.managedCommand === 'string') {
+        previous = {
+          ...(typeof row.present === 'boolean' ? { present: row.present } : {}),
+          value: row.value,
+          managedCommand: row.managedCommand,
+        };
+      }
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Surplus Claude statusline backup is unreadable; refusing to replace it.');
+  }
+  const alreadyOwned = previous !== undefined && existingCommand === previous.managedCommand;
+  const originalCommand = alreadyOwned && previous
+    ? (typeof previous.value === 'object' && previous.value !== null && !Array.isArray(previous.value)
+      && typeof (previous.value as Record<string, unknown>).command === 'string'
+      ? (previous.value as Record<string, string>).command : undefined)
+    : existingCommand;
+  const managedCommand = statuslineCommand(originalCommand);
   const currentObject = current as Record<string, unknown> | undefined;
-  if (currentObject?.command === managedCommand) return false;
-  const backup = { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand };
+  if (alreadyOwned && existingCommand === managedCommand) return false;
+  if (!alreadyOwned && currentObject?.command === managedCommand) return false;
+  const backup = alreadyOwned && previous
+    ? { present: previous.present ?? false, value: previous.value, managedCommand }
+    : { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand };
   await writeAtomic(path, `${JSON.stringify(backup, null, 2)}\n`, 0o600);
   settings.statusLine = { ...(currentObject ?? {}), type: 'command', command: managedCommand };
   await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
