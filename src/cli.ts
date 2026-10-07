@@ -70,7 +70,6 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
 const getClaudeUsage = async (): Promise<{ readonly usage?: UsageSnapshot; readonly identityHash?: string }> => {
   const currentIdentity = readClaudeIdentityHash();
   const previousIdentity = await readClaudeIdentity();
-  await saveClaudeIdentity(currentIdentity);
   if (!currentIdentity) return {};
   if (currentIdentity !== previousIdentity) return { identityHash: currentIdentity };
   const snapshot = await readUsage('claude');
@@ -88,16 +87,13 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
     const claude = await getClaudeUsage();
     const usage = claude.usage;
     const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}) });
-    await saveState(provider, { tier: decision.tier, resetAt: usage?.resetsAt ?? '', observedAt: new Date().toISOString() });
     return { decision, ...(usage ? { usage } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
   const discovery = await discoverCodex();
   const usage = discovery?.usage;
-  if (usage) await saveUsage(usage);
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
   const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}) });
-  await saveState(provider, { tier: decision.tier, resetAt: usage?.resetsAt ?? '', observedAt: new Date().toISOString() });
   return { decision, ...(usage ? { usage } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
@@ -124,9 +120,18 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
   const childEnv = provider === 'claude' && result.identityHash
     ? { ...process.env, SURPLUS_CLAUDE_IDENTITY_HASH: result.identityHash }
     : process.env;
-  const onStarted = result.decision.tier === 'premium' ? async (): Promise<void> => {
-    try { await incrementActivations(); } catch { /* The local counter never controls provider launch or exit status. */ }
-  } : undefined;
+  const onStarted = async (): Promise<void> => {
+    try { await saveState(provider, { tier: result.decision.tier, resetAt: result.usage?.resetsAt ?? '', observedAt: new Date().toISOString() }); } catch { /* Local routing state never controls provider launch or exit status. */ }
+    if (provider === 'claude' && result.identityHash) {
+      try { await saveClaudeIdentity(result.identityHash); } catch { /* Account binding remains best-effort local state. */ }
+    }
+    if (provider === 'codex' && result.usage) {
+      try { await saveUsage(result.usage); } catch { /* Cached telemetry never controls provider launch or exit status. */ }
+    }
+    if (result.decision.tier === 'premium') {
+      try { await incrementActivations(); } catch { /* The local counter never controls provider launch or exit status. */ }
+    }
+  };
   process.exitCode = await launchProvider(provider, selected, childEnv, onStarted);
 };
 

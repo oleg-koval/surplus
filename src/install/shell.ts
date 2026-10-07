@@ -21,6 +21,11 @@ const shellRc = (): string => {
   throw new Error('Surplus supports zsh and bash installation. Run `surplus run <provider>` directly for other shells.');
 };
 
+const shellRcCandidates = (): readonly string[] => {
+  const home = process.env.HOME ?? homedir();
+  return [join(home, '.zshrc'), join(home, '.bash_profile'), join(home, '.bashrc')];
+};
+
 const replaceManagedBlock = (source: string, replacement: string): string => {
   const start = source.indexOf(begin);
   const finish = source.indexOf(end);
@@ -86,10 +91,15 @@ export const installShell = async (): Promise<void> => {
 };
 
 export const uninstallShell = async (): Promise<void> => {
-  let rc = '';
-  try { rc = await readFile(shellRc(), 'utf8'); } catch { /* No shell file was created. */ }
-  const cleaned = replaceManagedBlock(rc, '');
-  if (rc && cleaned !== rc) await writeAtomic(shellRc(), cleaned, 0o600);
+  for (const path of shellRcCandidates()) {
+    let rc: string;
+    try { rc = await readFile(path, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    const cleaned = replaceManagedBlock(rc, '');
+    if (cleaned !== rc) await writeAtomic(path, cleaned, 0o600);
+  }
   for (const provider of ['claude', 'codex']) {
     const path = join(managedBin(), provider);
     try { if (await readFile(path, 'utf8') === wrapper(provider)) await unlink(path); } catch { /* Keep user-edited or absent wrappers untouched. */ }
@@ -148,9 +158,23 @@ export const uninstallClaudeStatusLine = async (): Promise<void> => {
   const previousCommand = typeof backup.value === 'object' && backup.value !== null && !Array.isArray(backup.value) && typeof (backup.value as Record<string, unknown>).command === 'string'
     ? (backup.value as Record<string, string>).command : undefined;
   const ownedCommand = typeof backup.managedCommand === 'string' ? backup.managedCommand : statuslineCommand(previousCommand);
-  if (typeof current !== 'object' || current === null || (current as Record<string, unknown>).command !== ownedCommand) return;
-  if (backup.present) settings.statusLine = backup.value;
-  else delete settings.statusLine;
+  if (typeof current !== 'object' || current === null || Array.isArray(current)
+    || (current as Record<string, unknown>).type !== 'command'
+    || (current as Record<string, unknown>).command !== ownedCommand) return;
+  if (backup.present) {
+    const prior = backup.value;
+    if (typeof prior === 'object' && prior !== null && !Array.isArray(prior)) {
+      const fields = prior as Record<string, unknown>;
+      const restored = { ...(current as Record<string, unknown>) };
+      if (Object.hasOwn(fields, 'type')) restored.type = fields.type;
+      else delete restored.type;
+      if (Object.hasOwn(fields, 'command')) restored.command = fields.command;
+      else delete restored.command;
+      settings.statusLine = restored;
+    } else {
+      settings.statusLine = prior;
+    }
+  } else delete settings.statusLine;
   await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
   await unlink(backupPath);
 };

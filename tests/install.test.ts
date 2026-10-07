@@ -39,6 +39,20 @@ describe('reversible install', () => {
     });
   });
 
+  it('removes managed startup blocks even after switching shells', async () => {
+    await withHome(async (home) => {
+      const zsh = join(home, '.zshrc');
+      const bash = join(home, '.bash_profile');
+      await installShell();
+      process.env.SHELL = '/bin/bash';
+      await writeFile(bash, 'export BASH_VALUE=kept\n');
+      await uninstallShell();
+      expect(await readFile(zsh, 'utf8')).toBe('');
+      expect(await readFile(bash, 'utf8')).toBe('export BASH_VALUE=kept\n');
+      await expect(readFile(join(home, 'state/surplus/bin/codex'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+  });
+
   it('chains and restores a preexisting Claude command statusline only while Surplus still owns it', async () => {
     await withHome(async (home) => {
       const settings = join(home, '.claude', 'settings.json');
@@ -55,6 +69,22 @@ describe('reversible install', () => {
       await uninstallClaudeStatusLine();
       const restored = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: unknown };
       expect(restored.statusLine).toEqual(original);
+    });
+  });
+
+  it('restores only owned Claude statusline fields and keeps later padding edits', async () => {
+    await withHome(async (home) => {
+      const settings = join(home, '.claude', 'settings.json');
+      await import('node:fs/promises').then(({ mkdir }) => mkdir(join(home, '.claude'), { recursive: true }));
+      await writeFile(settings, JSON.stringify({ statusLine: { type: 'command', command: 'user-line', padding: 8, keep: false } }));
+      await installClaudeStatusLine();
+      const installed = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: Record<string, unknown> };
+      await writeFile(settings, JSON.stringify({ statusLine: {
+        type: installed.statusLine.type, command: installed.statusLine.command, padding: 16, laterEdit: 'keep',
+      } }));
+      await uninstallClaudeStatusLine();
+      const restored = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: Record<string, unknown> };
+      expect(restored.statusLine).toEqual({ type: 'command', command: 'user-line', padding: 16, laterEdit: 'keep' });
     });
   });
 
