@@ -85,7 +85,7 @@ describe('reversible install', () => {
       await writeFile(backupPath, JSON.stringify({ ...firstBackup, managedCommand: oldInstalledCommand }));
       await writeFile(settingsPath, JSON.stringify({ statusLine: { type: 'command', command: oldInstalledCommand, padding: 16, localEdit: true } }));
 
-      expect(await installClaudeStatusLine()).toBe(true);
+      expect(await installClaudeStatusLine()).toBe(false);
       const reinstalled = JSON.parse(await readFile(settingsPath, 'utf8')) as { statusLine: Record<string, unknown> };
       const savedBackup = JSON.parse(await readFile(backupPath, 'utf8')) as { present: boolean; value: unknown; managedCommand: string };
       expect(reinstalled.statusLine.command).not.toBe(oldInstalledCommand);

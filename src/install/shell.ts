@@ -161,7 +161,7 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   await writeAtomic(path, `${JSON.stringify(backup, null, 2)}\n`, 0o600);
   settings.statusLine = { ...(currentObject ?? {}), type: 'command', command: managedCommand };
   await writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
-  return true;
+  return !alreadyOwned;
 };
 
 export const uninstallClaudeStatusLine = async (): Promise<void> => {
