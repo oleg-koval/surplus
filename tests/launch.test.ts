@@ -74,6 +74,15 @@ describe('launch argument preservation', () => {
     expect(hasExplicitOverride('claude', ['--allowedTools', 'doctor'])).toBe(false);
   });
 
+  it('recognizes Claude daemon only in the documented argument position', () => {
+    expect(hasExplicitOverride('claude', ['daemon', 'status'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--dangerously-skip-permissions', 'daemon', 'status'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--allow-dangerously-skip-permissions', 'daemon', 'status'])).toBe(true);
+    expect(hasExplicitOverride('claude', ['--append-system-prompt', 'instructions', 'daemon', 'status'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--append-system-prompt=instructions', 'daemon', 'status'])).toBe(false);
+    expect(hasExplicitOverride('claude', ['--dangerously-skip-permissions', '--append-system-prompt', 'instructions', 'daemon'])).toBe(false);
+  });
+
   it('adds model and effort flags only when requested', () => {
     expect(appendModel('claude', 'opus', ['folder'])).toEqual(['--model', 'opus', 'folder']);
     expect(appendEffort('codex', 'high', ['task'])).toEqual(['-c', 'model_reasoning_effort="high"', 'task']);

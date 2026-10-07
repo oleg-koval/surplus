@@ -50,7 +50,10 @@ export const hasExplicitOverride = (provider: Provider, args: readonly string[],
   if (normalizedArgs.some((arg) => ['--json', '--output-format', '--version', '-v', '-V', '--help', '-h'].includes(arg))) return true;
   if (provider === 'claude') {
     const utilities = new Set(['auth', 'mcp', 'plugin', 'plugins', 'agents', 'doctor', 'install', 'update', 'upgrade', 'setup-token', 'logs', 'attach', 'stop', 'kill', 'rm', 'auto-mode', 'gateway', 'daemon', 'desktop', 'import', 'project', 'purge', 'remote-control', 'respawn', 'self-hosted-runner', 'ultrareview', 'teleport']);
-    return utilities.has(claudeUtilityCommand(cliArgs) ?? '')
+    const command = claudeUtilityCommand(cliArgs);
+    const daemonCommand = command === 'daemon' && (cliArgs[0] === 'daemon'
+      || ((cliArgs[0] === '--dangerously-skip-permissions' || cliArgs[0] === '--allow-dangerously-skip-permissions') && cliArgs[1] === 'daemon'));
+    return (command === 'daemon' ? daemonCommand : utilities.has(command ?? ''))
       || normalizedArgs.some((arg) => ['--resume', '-r', '--continue', '-c', '--print', '-p', '--bg', '--background', '--cloud', '--environment', '--exec', '--desktop', '--bare', '--debug', '-d', '--verbose', '--agent', '--agents', '--worktree', '-w', '--remote-control', '--sdk-url', '--settings', '--init-only', '--from-pr', '--teleport', '--fallback-model', '--advisor'].includes(arg) || /^-r.+/.test(arg));
   }
   if (normalizedArgs.some((arg) => ['--oss', '--local-provider', '--remote', '--remote-auth-token-env'].includes(arg))) return true;
