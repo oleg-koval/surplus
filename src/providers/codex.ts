@@ -11,6 +11,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const debug = (message: string): void => { if (process.env.SURPLUS_DEBUG === '1') process.stderr.write(`surplus debug: ${message}\n`); };
 
+const liveChildren = new Set<ReturnType<typeof spawn>>();
+
+/**
+ * Attempts to SIGKILL tracked app-server children before a forced process exit.
+ * Signals child processes and clears tracking state, ignoring kill errors without waiting for exit.
+ */
+export const killCodexAppServers = (): void => {
+  for (const child of liveChildren) { try { child.kill('SIGKILL'); } catch { /* Already gone. */ } }
+  liveChildren.clear();
+};
+
 class AppServer {
   private readonly child = spawn(process.env.SURPLUS_CODEX_BIN ?? 'codex', ['app-server', '--listen', 'stdio://'], { stdio: ['pipe', 'pipe', 'ignore'] });
   private readonly lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
@@ -20,7 +31,12 @@ class AppServer {
   private readonly timeout: NodeJS.Timeout;
   private closed = false;
 
+  /**
+   * Starts and tracks a Codex app-server process for metadata requests, with an eight-second close timer.
+   * Performs child-process IO; process and stdin errors reject pending requests, while synchronous setup failures propagate.
+   */
   constructor() {
+    liveChildren.add(this.child);
     this.lines.on('line', (line) => {
       let value: unknown;
       try { value = JSON.parse(line) as unknown; } catch { return; }
@@ -37,7 +53,7 @@ class AppServer {
     });
     this.child.on('error', (error) => { this.rejectPending(error); });
     this.child.stdin.on('error', (error) => { this.rejectPending(error); });
-    this.child.on('exit', () => { this.rejectPending(new Error('Codex app-server exited before replying.')); });
+    this.child.on('exit', () => { liveChildren.delete(this.child); this.rejectPending(new Error('Codex app-server exited before replying.')); });
     this.timeout = setTimeout(() => { this.close(); }, 8_000);
     this.timeout.unref();
   }
@@ -120,6 +136,11 @@ export const selectEffectiveCodexModel = (configuredModel: unknown, models: read
   return models.find((model) => model.isDefault === true && typeof model.model === 'string');
 };
 
+/**
+ * Probes Codex for included usage and model capabilities, stamping usage with now; returns undefined for non-ChatGPT accounts or caught discovery failures, and may return metadata without usage.
+ * Starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
+ * Synchronous server setup or cleanup failures reject rather than becoming an undefined result.
+ */
 export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | undefined> => {
   const server = new AppServer();
   try {
@@ -146,6 +167,7 @@ export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | 
           resetsAt, sessionWindow: sessionStatus,
           ...(sessionWindow && sessionResetsAt ? { sessionUsedPercent: sessionWindow.usedPercent as number, sessionResetsAt } : {}),
           usageAllowed: typeof limits.ordinaryUsageAllowed === 'boolean' ? limits.ordinaryUsageAllowed : null,
+          ...(isNumber(window.windowDurationMins) ? { windowMinutes: window.windowDurationMins } : {}),
         };
       }
     }

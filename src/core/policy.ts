@@ -1,14 +1,74 @@
-import type { Decision, ProviderConfig, ProviderState, UsageSnapshot } from './types.js';
+import type { Decision, Pace, ProviderConfig, ProviderState, UsageSample, UsageSnapshot } from './types.js';
 
+const defaultWindowMinutes = 10_080;
+const recentWindowMs = 24 * 60 * 60_000;
+const minRecentSpanMs = 2 * 60 * 60_000;
+
+/**
+ * Purely returns the premium burn multiplier, margin in percentage points, and minimum elapsed minutes, using provider defaults for omitted settings.
+ */
+const paceSettings = (config: ProviderConfig, provider: UsageSnapshot['provider']): { readonly burn: number; readonly margin: number; readonly minElapsed: number } => ({
+  burn: config.premiumBurnMultiplier ?? (provider === 'codex' ? 1.3 : 1.5),
+  margin: config.paceMarginPercent ?? 10,
+  minElapsed: config.minPaceElapsedMinutes ?? 1440,
+});
+
+const percent = (value: number): string => String(Math.max(0, Math.round(value)));
+
+/**
+ * Purely projects unused allowance at premium burn and, when default burn exhausts allowance early, rounded minutes before reset at exhaustion.
+ * Returns undefined until elapsed time is positive, finite, and meets the configured minimum; an unspecified window lasts seven days.
+ * Uses the faster of average usage and same-window usage over at least two hours within the last 24 hours.
+ */
+const computePace = (input: {
+  readonly usage: UsageSnapshot;
+  readonly config: ProviderConfig;
+  readonly history: readonly UsageSample[];
+  readonly now: Date;
+  readonly minutesUntilReset: number;
+}): Pace | undefined => {
+  const { usage, config, history, now, minutesUntilReset } = input;
+  const { burn, minElapsed } = paceSettings(config, usage.provider);
+  const windowMinutes = usage.windowMinutes ?? defaultWindowMinutes;
+  const elapsed = windowMinutes - minutesUntilReset;
+  if (!Number.isFinite(elapsed) || elapsed < minElapsed || elapsed <= 0) return undefined;
+  const avgRate = usage.weeklyUsedPercent / elapsed;
+  const observed = Date.parse(usage.observedAt);
+  const recent = history
+    .filter((sample) => sample.resetsAt === usage.resetsAt && Number.isFinite(Date.parse(sample.observedAt))
+      && now.getTime() - Date.parse(sample.observedAt) <= recentWindowMs && Date.parse(sample.observedAt) <= observed)
+    .sort((left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt));
+  let recentRate = 0;
+  const first = recent[0];
+  if (first && observed - Date.parse(first.observedAt) >= minRecentSpanMs) {
+    recentRate = Math.max(0, usage.weeklyUsedPercent - first.used) / ((observed - Date.parse(first.observedAt)) / 60_000);
+  }
+  const rate = Math.max(avgRate, recentRate);
+  const projectedUnusedPercent = 100 - (usage.weeklyUsedPercent + rate * burn * minutesUntilReset);
+  const defaultUsedAtReset = usage.weeklyUsedPercent + rate * minutesUntilReset;
+  const runsOut = rate > 0 && defaultUsedAtReset > 100
+    ? minutesUntilReset - (100 - usage.weeklyUsedPercent) / rate : undefined;
+  return {
+    projectedUnusedPercent,
+    ...(runsOut !== undefined && runsOut > 0 ? { runsOutBeforeResetMinutes: Math.round(runsOut) } : {}),
+  };
+};
+
+/**
+ * Returns a routing decision with its reason and available allowance, reset, and pace estimates, choosing default when telemetry or headroom checks fail.
+ * Uses pace when available unless near-reset routing is configured, falling back to the near-reset rule otherwise; previous premium state in the same reset window relaxes thresholds.
+ * Pure when now is supplied; otherwise reads the current clock, without changing routing state or launching a provider.
+ */
 export const decide = (input: {
   readonly usage?: UsageSnapshot;
   readonly config: ProviderConfig;
   readonly previous?: ProviderState;
+  readonly history?: readonly UsageSample[];
   readonly now?: Date;
 }): Decision => {
-  const { usage, config, previous, now = new Date() } = input;
-  const fallback = (reason: string, weeklyRemainingPercent: number | null = null, minutesUntilReset: number | null = null): Decision => ({
-    tier: 'default', model: 'provider default', reason, weeklyRemainingPercent, minutesUntilReset,
+  const { usage, config, previous, history = [], now = new Date() } = input;
+  const fallback = (reason: string, weeklyRemainingPercent: number | null = null, minutesUntilReset: number | null = null, pace?: Pace): Decision => ({
+    tier: 'default', model: 'provider default', reason, weeklyRemainingPercent, minutesUntilReset, ...(pace ? { pace } : {}),
   });
 
   if (!usage) return fallback('No usage telemetry is available.');
@@ -38,16 +98,28 @@ export const decide = (input: {
   const threshold = activePremium
     ? config.minWeeklyRemainingPercent - config.hysteresisPercent
     : config.minWeeklyRemainingPercent;
+  const pace = computePace({ usage, config, history, now, minutesUntilReset });
 
-  if (remaining < requiredHeadroom) return fallback('Weekly allowance cannot cover the configured session budget and reserve.', remaining, minutesUntilReset);
-  if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback('Session-window allowance is below the configured headroom.', remaining, minutesUntilReset);
-  if (remaining < threshold) return fallback('Weekly allowance is below the premium threshold.', remaining, minutesUntilReset);
-  if (minutesUntilReset > config.nearResetMinutes) return fallback('The weekly reset is not close enough to use the premium window.', remaining, minutesUntilReset);
+  if (remaining < requiredHeadroom) return fallback('Weekly allowance cannot cover the configured session budget and reserve.', remaining, minutesUntilReset, pace);
+  if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback('Session-window allowance is below the configured headroom.', remaining, minutesUntilReset, pace);
+  if (remaining < threshold) return fallback('Weekly allowance is below the premium threshold.', remaining, minutesUntilReset, pace);
+
+  const strategy = config.strategy ?? 'pace';
+  let reason: string;
+  if (strategy === 'pace' && pace) {
+    const margin = Math.max(0, paceSettings(config, usage.provider).margin - (activePremium ? config.hysteresisPercent : 0));
+    if (pace.projectedUnusedPercent < config.reservePercent + margin) {
+      return fallback(`On pace to leave only ~${percent(pace.projectedUnusedPercent)}% unused at reset; staying on default.`, remaining, minutesUntilReset, pace);
+    }
+    reason = `On pace to leave ~${percent(pace.projectedUnusedPercent)}% unused at reset; premium fits.`;
+  } else {
+    if (minutesUntilReset > config.nearResetMinutes) return fallback('The weekly reset is not close enough to use the premium window.', remaining, minutesUntilReset, pace);
+    reason = activePremium ? 'Premium mode remains within its hysteresis band.' : 'Fresh weekly headroom is available near the reset.';
+  }
 
   const decision: Decision = {
-    tier: 'premium', model: config.premiumModel,
-    reason: activePremium ? 'Premium mode remains within its hysteresis band.' : 'Fresh weekly headroom is available near the reset.',
-    weeklyRemainingPercent: remaining, minutesUntilReset,
+    tier: 'premium', model: config.premiumModel, reason,
+    weeklyRemainingPercent: remaining, minutesUntilReset, ...(pace ? { pace } : {}),
   };
   return config.premiumEffort ? { ...decision, effort: config.premiumEffort } : decision;
 };
