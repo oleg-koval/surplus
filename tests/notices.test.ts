@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -43,6 +43,24 @@ const premiumUsage = claudeUsage(3, 20);
 const fastUsage = claudeUsage(3, 60);
 
 describe('usage history', () => {
+  it('retains only samples with valid percentages, observation dates, and field types', async () => {
+    await withHome(async () => {
+      await saveUsage(premiumUsage);
+      const sample = { observedAt: now.toISOString(), used: 20, resetsAt: premiumUsage.resetsAt };
+      const valid = [0, 20.5, 100].map((used) => ({ ...sample, used }));
+      const invalid = [
+        null, [], 'sample', {},
+        ...[-0.1, 100.1, null, '20'].map((used) => ({ ...sample, used })),
+        ...['invalid', '', '999999-01-01', null, 0].map((observedAt) => ({ ...sample, observedAt })),
+        { ...sample, resetsAt: null }, { observedAt: sample.observedAt, used: 20 },
+      ];
+      // JSON numeric overflow parses as Infinity, unlike JSON.stringify(Infinity), which emits null.
+      const overflow = [1, -1].map((sign) => `{"observedAt":"${sample.observedAt}","used":${sign}e400,"resetsAt":"${sample.resetsAt}"}`);
+      await writeFile(join(dataDir(), 'claude-usage-history.json'), `[${[...valid, ...invalid].map((row) => JSON.stringify(row)).concat(overflow).join(',')}]`);
+      expect(await readUsageHistory('claude')).toEqual(valid);
+    });
+  });
+
   it('throttles samples, keeps only the current window, and caps the length', async () => {
     await withHome(async () => {
       const at = (minutes: number, used: number, base = premiumUsage): UsageSnapshot => ({ ...base, observedAt: new Date(now.getTime() + minutes * 60_000).toISOString(), weeklyUsedPercent: used });

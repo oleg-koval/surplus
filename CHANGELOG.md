@@ -1,3 +1,10 @@
+# [0.2.0-beta.2](https://github.com/oleg-koval/surplus/compare/v0.2.0-beta.1...v0.2.0-beta.2) (2026-10-08)
+
+
+### 🐛 Bug Fixes
+
+* reject invalid usage windows and malformed history samples ([763cff9](https://github.com/oleg-koval/surplus/commit/763cff90cbff1b8be4d197fb641b9332298fa15e))
+
 # [0.2.0-beta.1](https://github.com/oleg-koval/surplus/compare/v0.1.2...v0.2.0-beta.1) (2026-10-08)
 
 

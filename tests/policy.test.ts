@@ -56,6 +56,29 @@ const atElapsed = (elapsedDays: number, used: number, extra: Partial<UsageSnapsh
 });
 
 describe('pace policy', () => {
+  it.each([null, '', '10080', true, [], {}, Number.NaN, Infinity, -Infinity, 0, -1])('rejects invalid window duration %j', (windowMinutes) => {
+    const malformed = { ...usage, windowMinutes } as unknown as UsageSnapshot;
+    for (const settings of [config, nearReset]) {
+      const decision = decide({ usage: malformed, config: settings, now });
+      expect(decision.tier).toBe('default');
+      expect(decision.reason).toMatch(/invalid usage window duration/);
+      expect(decision.pace).toBeUndefined();
+    }
+  });
+
+  it('uses the seven-day default only for an omitted window', () => {
+    const implicit = decide({ usage, config, now });
+    expect(decide({ usage: { ...usage, windowMinutes: undefined }, config, now })).toEqual(implicit);
+    expect(decide({ usage: { ...usage, windowMinutes: 10080 }, config, now })).toEqual(implicit);
+  });
+
+  it('preserves near-reset routing at the start of a valid window', () => {
+    const decision = decide({ usage: { ...usage, windowMinutes: 1440 }, config: { ...config, minPaceElapsedMinutes: 0 }, now });
+    expect(decision.tier).toBe('premium');
+    expect(decision.reason).toMatch(/Fresh weekly headroom/);
+    expect(decision.pace).toBeUndefined();
+  });
+
   it('falls back to the near-reset rule before enough of the window has elapsed', () => {
     const early = atElapsed(0.25, 2);
     const decision = decide({ usage: early, config, now });
