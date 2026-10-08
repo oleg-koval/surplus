@@ -134,7 +134,17 @@ describe('pace policy', () => {
     const stale = atElapsed(1, 20, { observedAt: observedEarlier.toISOString() });
     const decision = decide({ usage: stale, config: { ...config, maxTelemetryAgeMinutes: 24 * 60, minPaceElapsedMinutes: 2 * 60 }, now });
     const observedElapsedMinutes = 12 * 60;
-    expect(decision.pace?.projectedUnusedPercent).toBeCloseTo(100 - (20 + (20 / observedElapsedMinutes) * 1.5 * decision.minutesUntilReset!), 5);
+    const minutesFromObservation = Math.round((Date.parse(stale.resetsAt) - observedEarlier.getTime()) / 60_000);
+    expect(decision.pace?.projectedUnusedPercent).toBeCloseTo(100 - (20 + (20 / observedElapsedMinutes) * 1.5 * minutesFromObservation), 5);
+  });
+
+  it('projects from when usage was observed, so time since observation cannot overstate unused allowance', () => {
+    // 27.6% used, observed 2h ago with 4d to reset: projecting over 4d leaves ~15.6% (premium), over 4d2h ~14.4% (default).
+    const observedEarlier = new Date(now.getTime() - 2 * 60 * 60_000);
+    const stale = atElapsed(3, 27.6, { observedAt: observedEarlier.toISOString() });
+    const decision = decide({ usage: stale, config: { ...config, maxTelemetryAgeMinutes: 3 * 60 }, now });
+    expect(decision.pace?.projectedUnusedPercent).toBeCloseTo(100 - 27.6 * (1 + 1.5 * (98 * 60) / (70 * 60)), 5);
+    expect(decision.tier).toBe('default');
   });
 
   it('honours the Codex window length and burn multiplier', () => {
