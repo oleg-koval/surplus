@@ -38,6 +38,10 @@ const showDecision = (decision: ReturnType<typeof decide>): void => {
   process.stdout.write(`${decision.tier.toUpperCase()} · ${decision.model} · ${remaining} weekly remaining · reset in ${until}\n${decision.reason}\n`);
 };
 
+/**
+ * Reads Claude settings, routing state, and history to return a statusline segment for the captured snapshot.
+ * Performs filesystem IO and resolves to an empty string when disabled, unremarkable, or any operation fails.
+ */
 export const computeSegment = async (snapshot: UsageSnapshot): Promise<string> => {
   try {
     const config = await readConfig();
@@ -49,6 +53,11 @@ export const computeSegment = async (snapshot: UsageSnapshot): Promise<string> =
   } catch { return ''; }
 };
 
+/**
+ * Captures identity-bound Claude usage from stdin and writes the optional segment alongside output from the base64 shell command in --original.
+ * Performs filesystem and process IO, limits chained output to one MiB and its wait to two seconds, and sets exit status when interrupted.
+ * Capture failures are ignored; input-read failures reject.
+ */
 const runStatusLine = async (args: readonly string[]): Promise<void> => {
   const input = await readStatusLineInput();
   let segment = '';
@@ -135,6 +144,10 @@ const getClaudeUsage = async (): Promise<{ readonly usage?: UsageSnapshot; reado
   };
 };
 
+/**
+ * Returns a routing decision with available usage, premium effort, and Claude identity metadata.
+ * Performs filesystem and provider-process IO; unavailable telemetry produces a default decision, while configuration, path-resolution, and uncaught provider errors reject.
+ */
 const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; premiumEffort?: string; identityHash?: string }> => {
   const config = await readConfig();
   const providerConfig = configured(config, provider);
@@ -154,6 +167,11 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
   return { decision, ...(usage ? { usage } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
+/**
+ * Launches the provider with automatic premium routing only for eligible interactive sessions without explicit overrides, retaining original arguments when preparation fails.
+ * Performs process and filesystem IO, attempts to persist routing metadata, and replaces the process on POSIX or sets its exit status after the child exits.
+ * Provider lookup and launch failures reject; local state write failures are ignored.
+ */
 const run = async (provider: Provider, args: string[]): Promise<void> => {
   if (!shouldAutomaticallyRoute(process.stdin.isTTY, process.stdout.isTTY)) {
     process.exitCode = await launchProvider(provider, args);
@@ -196,6 +214,10 @@ const status = async (provider: Provider): Promise<void> => {
   showDecision(result.decision);
 };
 
+/**
+ * Persists provider preferences from --premium and --effort argument pairs while retaining existing feature settings.
+ * Performs filesystem IO and writes a confirmation; invalid arguments and configuration read, validation, or write failures reject.
+ */
 const configure = async (provider: Provider, args: string[]): Promise<void> => {
   const config = await readConfig();
   const current = configured(config, provider);
@@ -221,6 +243,11 @@ const featureFlags: Readonly<Record<string, keyof Features>> = {
   '--session-notice': 'sessionNotice', '--prompt-nudge': 'promptNudge', '--statusline-segment': 'statuslineSegment',
 };
 
+/**
+ * Applies feature flag/on-or-off pairs to provider hooks and saved settings, attempting hook rollback if saving settings fails.
+ * Performs filesystem IO and writes a confirmation; invalid arguments, config failures, and hook synchronization failures reject.
+ * A settings-save failure remains the rejection even when its hook rollback also fails.
+ */
 const configureFeatures = async (args: string[]): Promise<void> => {
   const config = await readConfig();
   const next: Record<string, boolean> = {};
@@ -253,6 +280,11 @@ const demo = (): void => {
 
 let forceExit = false;
 
+/**
+ * Dispatches CLI arguments, defaulting to process arguments, and resolves when the selected command completes unless a provider launch replaces the process.
+ * May perform filesystem, stream, and child-process IO and update process exit state; invalid commands set exit code 2, while hooks set it to 0.
+ * Uncaught command failures reject, including configuration and installation errors; uninstall failures are collected in an AggregateError.
+ */
 export const main = async (args = process.argv.slice(2)): Promise<void> => {
   const [command, first, ...rest] = args;
   if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usageText); return; }

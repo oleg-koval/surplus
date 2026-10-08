@@ -4,6 +4,9 @@ const defaultWindowMinutes = 10_080;
 const recentWindowMs = 24 * 60 * 60_000;
 const minRecentSpanMs = 2 * 60 * 60_000;
 
+/**
+ * Purely returns the premium burn multiplier, margin in percentage points, and minimum elapsed minutes, using provider defaults for omitted settings.
+ */
 const paceSettings = (config: ProviderConfig, provider: UsageSnapshot['provider']): { readonly burn: number; readonly margin: number; readonly minElapsed: number } => ({
   burn: config.premiumBurnMultiplier ?? (provider === 'codex' ? 1.3 : 1.5),
   margin: config.paceMarginPercent ?? 10,
@@ -12,6 +15,11 @@ const paceSettings = (config: ProviderConfig, provider: UsageSnapshot['provider'
 
 const percent = (value: number): string => String(Math.max(0, Math.round(value)));
 
+/**
+ * Purely projects unused allowance at premium burn and, when default burn exhausts allowance early, rounded minutes before reset at exhaustion.
+ * Returns undefined until elapsed time is positive, finite, and meets the configured minimum; an unspecified window lasts seven days.
+ * Uses the faster of average usage and same-window usage over at least two hours within the last 24 hours.
+ */
 const computePace = (input: {
   readonly usage: UsageSnapshot;
   readonly config: ProviderConfig;
@@ -46,6 +54,11 @@ const computePace = (input: {
   };
 };
 
+/**
+ * Returns a routing decision with its reason and available allowance, reset, and pace estimates, choosing default when telemetry or headroom checks fail.
+ * Uses pace when available unless near-reset routing is configured, falling back to the near-reset rule otherwise; previous premium state in the same reset window relaxes thresholds.
+ * Pure when now is supplied; otherwise reads the current clock, without changing routing state or launching a provider.
+ */
 export const decide = (input: {
   readonly usage?: UsageSnapshot;
   readonly config: ProviderConfig;

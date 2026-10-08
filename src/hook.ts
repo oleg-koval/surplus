@@ -18,6 +18,10 @@ export interface HookDeps {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/**
+ * Reads saved routing state and history to return a decision and configuration adjusted for the discovered Codex capabilities.
+ * Performs filesystem IO and rejects on invalid home-directory configuration; unreadable saved state or history is treated as missing.
+ */
 const decideFor = async (provider: Provider, config: ProviderConfig, discovery: CodexDiscovery | undefined, usage: UsageSnapshot | undefined, now: Date): Promise<{ readonly decision: Decision; readonly config: ProviderConfig }> => {
   const previous = await readState(provider);
   const history = await readUsageHistory(provider);
@@ -25,7 +29,11 @@ const decideFor = async (provider: Provider, config: ProviderConfig, discovery: 
   return { decision: decide({ ...(usage ? { usage } : {}), config: effective, ...(previous ? { previous } : {}), history, now }), config: effective };
 };
 
-/** Returns the one-line message for the hook, or undefined to stay silent. Throws only on unexpected failures; the caller prints nothing then. */
+/**
+ * Returns a hook notice or undefined when disabled, unremarkable, unchanged on prompt submission, or throttled within ten minutes of a prior Codex session check.
+ * Performs filesystem IO, may probe Codex, and attempts to persist usage and session state; input supplies session_id and model, while deps overrides the clock, environment, or discovery.
+ * Rejects on configuration, path-resolution, or uncaught discovery failures; cache and session write failures are ignored.
+ */
 export const hookMessage = async (provider: Provider, event: HookEvent, input: unknown, deps: HookDeps = {}): Promise<string | undefined> => {
   const now = deps.now ?? new Date();
   const env = deps.env ?? process.env;
@@ -63,7 +71,11 @@ export const hookMessage = async (provider: Provider, event: HookEvent, input: u
   return message;
 };
 
-/** Reads hook JSON from stdin and resolves to stdout text within the hard budget; never rejects. */
+/**
+ * Resolves to a systemMessage JSON line or an empty string on silence, failure, or expiry of a three-second timer; never rejects.
+ * Invokes readInput and hook processing, which may perform IO and persist state.
+ * Timing out does not cancel pending input or hook work.
+ */
 export const runHook = async (provider: Provider, event: HookEvent, readInput: () => Promise<unknown>, deps: HookDeps = {}): Promise<string> => {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<undefined>((resolve) => { timer = setTimeout(() => { resolve(undefined); }, hookBudgetMs); });

@@ -13,7 +13,10 @@ const debug = (message: string): void => { if (process.env.SURPLUS_DEBUG === '1'
 
 const liveChildren = new Set<ReturnType<typeof spawn>>();
 
-/** SIGKILLs any app-server still running; used before a forced process exit so no child is orphaned. */
+/**
+ * Attempts to SIGKILL tracked app-server children before a forced process exit.
+ * Signals child processes and clears tracking state, ignoring kill errors without waiting for exit.
+ */
 export const killCodexAppServers = (): void => {
   for (const child of liveChildren) { try { child.kill('SIGKILL'); } catch { /* Already gone. */ } }
   liveChildren.clear();
@@ -28,6 +31,10 @@ class AppServer {
   private readonly timeout: NodeJS.Timeout;
   private closed = false;
 
+  /**
+   * Starts and tracks a Codex app-server process for metadata requests, with an eight-second close timer.
+   * Performs child-process IO; process and stdin errors reject pending requests, while synchronous setup failures propagate.
+   */
   constructor() {
     liveChildren.add(this.child);
     this.lines.on('line', (line) => {
@@ -129,6 +136,11 @@ export const selectEffectiveCodexModel = (configuredModel: unknown, models: read
   return models.find((model) => model.isDefault === true && typeof model.model === 'string');
 };
 
+/**
+ * Probes Codex for included usage and model capabilities, stamping usage with now; returns undefined for non-ChatGPT accounts or caught discovery failures, and may return metadata without usage.
+ * Starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
+ * Synchronous server setup or cleanup failures reject rather than becoming an undefined result.
+ */
 export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | undefined> => {
   const server = new AppServer();
   try {

@@ -16,6 +16,9 @@ const hooksFilePath = (provider: Provider): string => provider === 'claude' ? cl
 export const hookCommand = (provider: Provider, event: HookEventName): string =>
   `${shellQuote(process.execPath)} ${shellQuote(fileURLToPath(import.meta.url))} hook ${provider} ${event}`;
 
+/**
+ * Purely recognizes the managed command shape for a provider event, accepting older quoted executable and module paths.
+ */
 const isOurCommand = (command: unknown, provider: Provider, event: HookEventName): boolean =>
   typeof command === 'string' && new RegExp(`^'(?:[^']|'\\\\'')+' '(?:[^']|'\\\\'')+' hook ${provider} ${event}$`).test(command);
 
@@ -26,6 +29,10 @@ export const desiredEvents = (features: Features): HookEventName[] => [
   ...(features.promptNudge ? ['prompt-submit' as const] : []),
 ];
 
+/**
+ * Reads a hook file and returns its original text and parsed object, or undefined text and an empty object when missing.
+ * Performs filesystem IO and rejects on other read failures, malformed JSON, or a non-object root, using label to identify invalid content.
+ */
 const readRoot = async (path: string, label: string): Promise<{ readonly text: string | undefined; readonly root: Record<string, unknown> }> => {
   let text: string;
   try { text = await readFile(path, 'utf8'); } catch (error) {
@@ -38,7 +45,10 @@ const readRoot = async (path: string, label: string): Promise<{ readonly text: s
   return { text, root: parsed };
 };
 
-/** Applies the desired Surplus hook for one event to the parsed root, touching only our own entries. */
+/**
+ * Applies the desired Surplus hook for one event to the parsed root, touching only our own entries.
+ * Mutates root and its hooks object; throws when hooks is not an object or the event entries are not an array.
+ */
 const syncEvent = (root: Record<string, unknown>, provider: Provider, event: HookEventName, desired: boolean, label: string): void => {
   const key = eventKeys[event];
   if (root.hooks !== undefined && !isRecord(root.hooks)) throw new Error(`${label} "hooks" must be an object; refusing to edit it.`);
@@ -72,6 +82,11 @@ const syncEvent = (root: Record<string, unknown>, provider: Provider, event: Hoo
 
 export interface HooksSnapshot { readonly path: string; readonly before: string | undefined }
 
+/**
+ * Persists the desired Surplus events for one provider, returning a rollback snapshot only when a file is written.
+ * Performs filesystem IO and preserves foreign entries; a missing file stays absent when no events are desired.
+ * Rejects on path-resolution, file validation, or filesystem failures.
+ */
 const syncFile = async (provider: Provider, events: readonly HookEventName[]): Promise<HooksSnapshot | undefined> => {
   const path = hooksFilePath(provider);
   const label = provider === 'claude' ? 'Claude settings.json' : 'Codex hooks.json';
@@ -84,6 +99,10 @@ const syncFile = async (provider: Provider, events: readonly HookEventName[]): P
   return { path, before: text };
 };
 
+/**
+ * Restores snapshots in reverse order, deleting files that did not previously exist.
+ * Performs filesystem IO, ignores missing-path errors, and attempts every restoration before rejecting with an AggregateError for remaining failures.
+ */
 export const restoreHooks = async (snapshots: readonly HooksSnapshot[]): Promise<void> => {
   const failures: unknown[] = [];
   for (const snapshot of [...snapshots].reverse()) {
@@ -97,7 +116,11 @@ export const restoreHooks = async (snapshots: readonly HooksSnapshot[]): Promise
   if (failures.length > 0) throw new AggregateError(failures, 'Hook rollback was incomplete.');
 };
 
-/** Installs the enabled hook events for both harnesses and removes the disabled ones. Rolls back its own writes on failure. */
+/**
+ * Installs enabled Surplus hook events for both providers and removes disabled ones, returning snapshots of changed files for rollback.
+ * Performs filesystem IO and attempts to roll back completed writes on failure.
+ * Rejects with the original path, validation, or filesystem error, or an AggregateError if rollback also fails.
+ */
 export const syncHooks = async (features: Features): Promise<HooksSnapshot[]> => {
   const events = desiredEvents(features);
   const done: HooksSnapshot[] = [];
@@ -113,6 +136,10 @@ export const syncHooks = async (features: Features): Promise<HooksSnapshot[]> =>
   return done;
 };
 
+/**
+ * Removes managed Surplus hooks from both providers while preserving foreign entries.
+ * Performs filesystem IO and attempts both providers before rejecting with an AggregateError containing any path, validation, or filesystem failures.
+ */
 export const uninstallHooks = async (): Promise<void> => {
   const failures: unknown[] = [];
   for (const provider of ['claude', 'codex'] as const) {

@@ -32,6 +32,9 @@ export const atomicJson = async (path: string, value: unknown): Promise<void> =>
   await rename(temporary, destination);
 };
 
+/**
+ * Purely checks required routing settings and optional pace settings against their accepted values and bounds.
+ */
 const isProviderConfig = (value: unknown): value is ProviderConfig => {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
@@ -50,12 +53,18 @@ const isProviderConfig = (value: unknown): value is ProviderConfig => {
     && (row.minPaceElapsedMinutes === undefined || (typeof row.minPaceElapsedMinutes === 'number' && row.minPaceElapsedMinutes >= 0));
 };
 
+/**
+ * Purely accepts omitted features or an object whose values are all booleans, including unknown keys.
+ */
 const isFeatures = (value: unknown): boolean => {
   if (value === undefined) return true;
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   return Object.values(value).every((entry) => typeof entry === 'boolean');
 };
 
+/**
+ * Purely checks the version, both provider configurations, and optional features without applying defaults.
+ */
 const isSurplusConfig = (value: unknown): value is { readonly version: 1; readonly providers: Record<Provider, ProviderConfig>; readonly features?: Partial<Features> } => {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
@@ -64,6 +73,9 @@ const isSurplusConfig = (value: unknown): value is { readonly version: 1; readon
   return isProviderConfig(providers.claude) && isProviderConfig(providers.codex) && isFeatures(row.features);
 };
 
+/**
+ * Purely returns a copy of saved settings with missing pace options filled from the provider defaults.
+ */
 const withPaceDefaults = (provider: Provider, saved: ProviderConfig): ProviderConfig => {
   const defaults = defaultConfig.providers[provider];
   return {
@@ -75,6 +87,10 @@ const withPaceDefaults = (provider: Provider, saved: ProviderConfig): ProviderCo
   };
 };
 
+/**
+ * Reads the local config and returns validated settings with pace and feature defaults, or all defaults when the file is missing.
+ * Performs filesystem IO and rejects on invalid home-directory configuration, other read failures, malformed JSON, or invalid settings.
+ */
 export const readConfig = async (): Promise<SurplusConfig> => {
   let source: string;
   try { source = await readFile(configPath(), 'utf8'); } catch (error) {
@@ -98,11 +114,20 @@ export const historyThrottleMinutes = 10;
 const isUsageSample = (value: unknown): value is UsageSample => typeof value === 'object' && value !== null
   && typeof (value as UsageSample).observedAt === 'string' && typeof (value as UsageSample).used === 'number' && typeof (value as UsageSample).resetsAt === 'string';
 
+/**
+ * Reads saved history for the provider, retaining entries with the expected field types and returning an empty array for unreadable, malformed, or non-array data.
+ * Performs filesystem IO; invalid home-directory configuration rejects before the read.
+ */
 export const readUsageHistory = async (provider: Provider): Promise<UsageSample[]> => {
   const saved = await readJson<unknown>(historyPath(provider));
   return Array.isArray(saved) ? saved.filter(isUsageSample) : [];
 };
 
+/**
+ * Writes history for the snapshot's reset window, appending when usage changes or at least ten minutes have elapsed and retaining the last 300 entries on append.
+ * An invalid observation timestamp leaves history unchanged.
+ * Performs filesystem IO and rejects on home-directory or write failures.
+ */
 const recordUsageHistory = async (usage: UsageSnapshot): Promise<void> => {
   const observed = Date.parse(usage.observedAt);
   if (!Number.isFinite(observed)) return;
@@ -115,6 +140,10 @@ const recordUsageHistory = async (usage: UsageSnapshot): Promise<void> => {
   await atomicJson(historyPath(usage.provider), next);
 };
 
+/**
+ * Writes the provider's latest snapshot and attempts to update its usage history.
+ * Performs filesystem IO; snapshot persistence failures reject, while history failures are ignored.
+ */
 export const saveUsage = async (usage: UsageSnapshot): Promise<void> => {
   await atomicJson(usagePath(usage.provider), usage);
   try { await recordUsageHistory(usage); } catch { /* History only sharpens pace estimates; it never blocks capture. */ }
@@ -123,6 +152,10 @@ export const saveUsage = async (usage: UsageSnapshot): Promise<void> => {
 export interface HookSessionRecord { readonly state: string; readonly checkedAt: string }
 const sessionRetentionMs = 7 * 24 * 60 * 60_000;
 
+/**
+ * Reads session notice records with string state and check-time fields, returning an empty object for unreadable, malformed, or non-object data.
+ * Performs filesystem IO; invalid home-directory configuration rejects before the read.
+ */
 export const readHookSessions = async (): Promise<Record<string, HookSessionRecord>> => {
   const saved = await readJson<unknown>(hookSessionsPath());
   if (typeof saved !== 'object' || saved === null || Array.isArray(saved)) return {};
@@ -135,6 +168,10 @@ export const readHookSessions = async (): Promise<Record<string, HookSessionReco
   return result;
 };
 
+/**
+ * Persists the session's notice record, removing other records with invalid check times or check times more than seven days before now.
+ * Performs filesystem IO and rejects on home-directory or write failures.
+ */
 export const saveHookSession = async (sessionId: string, record: HookSessionRecord, now: Date): Promise<void> => {
   const sessions = await readHookSessions();
   const kept = Object.entries(sessions).filter(([key, value]) => key !== sessionId && now.getTime() - Date.parse(value.checkedAt) <= sessionRetentionMs);
