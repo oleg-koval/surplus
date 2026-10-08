@@ -17,7 +17,7 @@ const percent = (value: number): string => String(Math.max(0, Math.round(value))
 
 /**
  * Purely projects unused allowance at premium burn and, when default burn exhausts allowance early, rounded minutes before reset at exhaustion.
- * Returns undefined until elapsed time is positive, finite, and meets the configured minimum; an unspecified window lasts seven days.
+ * Returns undefined until elapsed time is positive, finite, and meets the configured minimum.
  * Uses the faster of average usage and same-window usage over at least two hours within the last 24 hours.
  */
 const computePace = (input: {
@@ -26,10 +26,10 @@ const computePace = (input: {
   readonly history: readonly UsageSample[];
   readonly now: Date;
   readonly minutesUntilReset: number;
+  readonly windowMinutes: number;
 }): Pace | undefined => {
-  const { usage, config, history, now, minutesUntilReset } = input;
+  const { usage, config, history, now, minutesUntilReset, windowMinutes } = input;
   const { burn, minElapsed } = paceSettings(config, usage.provider);
-  const windowMinutes = usage.windowMinutes ?? defaultWindowMinutes;
   const elapsed = windowMinutes - minutesUntilReset;
   if (!Number.isFinite(elapsed) || elapsed < minElapsed || elapsed <= 0) return undefined;
   const avgRate = usage.weeklyUsedPercent / elapsed;
@@ -88,6 +88,10 @@ export const decide = (input: {
   if (!Number.isFinite(usage.weeklyUsedPercent) || usage.weeklyUsedPercent < 0 || usage.weeklyUsedPercent > 100) {
     return fallback('The provider returned an invalid weekly usage percentage.');
   }
+  const { windowMinutes = defaultWindowMinutes } = usage;
+  if (typeof windowMinutes !== 'number' || !Number.isFinite(windowMinutes) || windowMinutes <= 0) {
+    return fallback('The provider returned an invalid usage window duration.');
+  }
 
   const remaining = 100 - usage.weeklyUsedPercent;
   const sessionRemaining = typeof sessionUsed === 'number' ? 100 - sessionUsed : 100;
@@ -98,7 +102,7 @@ export const decide = (input: {
   const threshold = activePremium
     ? config.minWeeklyRemainingPercent - config.hysteresisPercent
     : config.minWeeklyRemainingPercent;
-  const pace = computePace({ usage, config, history, now, minutesUntilReset });
+  const pace = computePace({ usage, config, history, now, minutesUntilReset, windowMinutes });
 
   if (remaining < requiredHeadroom) return fallback('Weekly allowance cannot cover the configured session budget and reserve.', remaining, minutesUntilReset, pace);
   if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback('Session-window allowance is below the configured headroom.', remaining, minutesUntilReset, pace);

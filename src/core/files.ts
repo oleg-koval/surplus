@@ -112,10 +112,13 @@ export const maxHistoryEntries = 300;
 export const historyThrottleMinutes = 10;
 
 const isUsageSample = (value: unknown): value is UsageSample => typeof value === 'object' && value !== null
-  && typeof (value as UsageSample).observedAt === 'string' && typeof (value as UsageSample).used === 'number' && typeof (value as UsageSample).resetsAt === 'string';
+  && typeof (value as UsageSample).observedAt === 'string' && Number.isFinite(Date.parse((value as UsageSample).observedAt))
+  && typeof (value as UsageSample).used === 'number' && Number.isFinite((value as UsageSample).used)
+  && (value as UsageSample).used >= 0 && (value as UsageSample).used <= 100
+  && typeof (value as UsageSample).resetsAt === 'string';
 
 /**
- * Reads saved history for the provider, retaining entries with the expected field types and returning an empty array for unreadable, malformed, or non-array data.
+ * Reads saved history for the provider, retaining entries with valid observation dates, usage percentages, and string reset times; returns an empty array for unreadable, malformed, or non-array data.
  * Performs filesystem IO; invalid home-directory configuration rejects before the read.
  */
 export const readUsageHistory = async (provider: Provider): Promise<UsageSample[]> => {
