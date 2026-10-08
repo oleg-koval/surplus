@@ -7,7 +7,7 @@ const minRecentSpanMs = 2 * 60 * 60_000;
 const paceSettings = (config: ProviderConfig, provider: UsageSnapshot['provider']): { readonly burn: number; readonly margin: number; readonly minElapsed: number } => ({
   burn: config.premiumBurnMultiplier ?? (provider === 'codex' ? 1.3 : 1.5),
   margin: config.paceMarginPercent ?? 10,
-  minElapsed: config.minPaceElapsedMinutes ?? 720,
+  minElapsed: config.minPaceElapsedMinutes ?? 1440,
 });
 
 const percent = (value: number): string => String(Math.max(0, Math.round(value)));

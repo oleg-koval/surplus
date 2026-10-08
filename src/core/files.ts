@@ -71,7 +71,7 @@ const withPaceDefaults = (provider: Provider, saved: ProviderConfig): ProviderCo
     strategy: saved.strategy ?? defaults.strategy ?? 'pace',
     premiumBurnMultiplier: saved.premiumBurnMultiplier ?? defaults.premiumBurnMultiplier ?? 1.5,
     paceMarginPercent: saved.paceMarginPercent ?? defaults.paceMarginPercent ?? 10,
-    minPaceElapsedMinutes: saved.minPaceElapsedMinutes ?? defaults.minPaceElapsedMinutes ?? 720,
+    minPaceElapsedMinutes: saved.minPaceElapsedMinutes ?? defaults.minPaceElapsedMinutes ?? 1440,
   };
 };
 
@@ -154,14 +154,14 @@ export const defaultConfig: SurplusConfig = {
       premiumModel: 'opus', minWeeklyRemainingPercent: 25,
       reservePercent: 5, expectedUsageUntilResetPercent: 5, minSessionRemainingPercent: 25, nearResetMinutes: 2880,
       maxTelemetryAgeMinutes: 120, hysteresisPercent: 5,
-      strategy: 'pace', premiumBurnMultiplier: 1.5, paceMarginPercent: 10, minPaceElapsedMinutes: 720,
+      strategy: 'pace', premiumBurnMultiplier: 1.5, paceMarginPercent: 10, minPaceElapsedMinutes: 1440,
     },
     codex: {
       premiumModel: 'auto', premiumEffort: 'high',
       minWeeklyRemainingPercent: 25, reservePercent: 5, expectedUsageUntilResetPercent: 5,
       minSessionRemainingPercent: 25,
       nearResetMinutes: 2880, maxTelemetryAgeMinutes: 5, hysteresisPercent: 5,
-      strategy: 'pace', premiumBurnMultiplier: 1.3, paceMarginPercent: 10, minPaceElapsedMinutes: 720,
+      strategy: 'pace', premiumBurnMultiplier: 1.3, paceMarginPercent: 10, minPaceElapsedMinutes: 1440,
     },
   },
 };
