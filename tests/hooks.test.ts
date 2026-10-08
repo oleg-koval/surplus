@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { main } from '../src/cli.js';
+import { main, routedChildEnvironment } from '../src/cli.js';
 import { defaultFeatures, readConfig } from '../src/core/files.js';
 import { codexHooksPath, hookCommand, syncHooks, uninstallHooks } from '../src/install/hooks.js';
 import { claudeSettingsPath } from '../src/install/shell.js';
@@ -38,6 +38,10 @@ const foreign = { hooks: { SessionStart: [{ matcher: 'startup', hooks: [{ type: 
 const sessionStartEntries = (root: Record<string, unknown>): unknown[] => (root.hooks as Record<string, unknown[]>).SessionStart ?? [];
 
 describe('hook install', () => {
+  it('removes an inherited premium marker from default-tier children', () => {
+    expect(routedChildEnvironment('claude', 'identity', 'default', { SURPLUS_ROUTED_TIER: 'premium' }).SURPLUS_ROUTED_TIER).toBeUndefined();
+    expect(routedChildEnvironment('claude', 'identity', 'premium', {}).SURPLUS_ROUTED_TIER).toBe('premium');
+  });
   it('creates both files with only the enabled events, idempotently', async () => {
     await withHome(async () => {
       await syncHooks(defaultFeatures);
@@ -101,10 +105,13 @@ describe('hook install', () => {
 
   it('rolls back the first file when the second one fails', async () => {
     await withHome(async () => {
+      await mkdir(process.env.CLAUDE_CONFIG_DIR ?? '', { recursive: true });
+      const original = `${JSON.stringify(foreign, null, 2)}\n`;
+      await writeFile(claudeSettingsPath(), original);
       await mkdir(process.env.CODEX_HOME ?? '', { recursive: true });
       await writeFile(codexHooksPath(), '{broken');
       await expect(syncHooks(defaultFeatures)).rejects.toThrow(/malformed/);
-      await expect(readFile(claudeSettingsPath(), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readFile(claudeSettingsPath(), 'utf8')).toBe(original);
     });
   });
 });
@@ -130,12 +137,13 @@ describe('install and uninstall commands', () => {
 
   it('rolls back the statusline when hook install fails', async () => {
     await withHome(async () => {
+      await mkdir(process.env.CLAUDE_CONFIG_DIR ?? '', { recursive: true });
+      const original = `${JSON.stringify({ theme: 'dark', statusLine: { type: 'command', command: 'printf original', padding: 3 } }, null, 2)}\n`;
+      await writeFile(claudeSettingsPath(), original);
       await mkdir(process.env.CODEX_HOME ?? '', { recursive: true });
       await writeFile(codexHooksPath(), '{broken');
       await expect(main(['install'])).rejects.toThrow(/malformed/);
-      const settings = await readFile(claudeSettingsPath(), 'utf8').catch(() => '{}');
-      expect(JSON.parse(settings)).toEqual({});
-      expect(JSON.stringify(JSON.parse(settings))).not.toMatch(/capture claude/);
+      expect(await readFile(claudeSettingsPath(), 'utf8')).toBe(original);
     });
   });
 
@@ -146,6 +154,25 @@ describe('install and uninstall commands', () => {
       const root = await readJson(claudeSettingsPath());
       expect(Object.keys(root.hooks as object)).toEqual(['UserPromptSubmit']);
       await expect(main(['configure', 'features', '--prompt-nudge', 'maybe'])).rejects.toThrow(/on or off/);
+    });
+  });
+
+  it('serializes concurrent config updates and recovers hook sync from saved features', async () => {
+    await withHome(async () => {
+      await Promise.all([
+        main(['configure', 'claude', '--premium', 'sonnet']),
+        main(['configure', 'features', '--prompt-nudge', 'on']),
+      ]);
+      expect((await readConfig()).providers.claude.premiumModel).toBe('sonnet');
+      expect((await readConfig()).features.promptNudge).toBe(true);
+
+      await mkdir(process.env.CODEX_HOME ?? '', { recursive: true });
+      await writeFile(codexHooksPath(), '{broken');
+      await expect(main(['configure', 'features', '--session-notice', 'off'])).rejects.toThrow(/malformed/);
+      expect((await readConfig()).features.sessionNotice).toBe(false);
+      await writeFile(codexHooksPath(), '{}');
+      await main(['install', '--no-claude-capture']);
+      expect(Object.keys((await readJson(claudeSettingsPath())).hooks as object)).toEqual(['UserPromptSubmit']);
     });
   });
 });

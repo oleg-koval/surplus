@@ -30,13 +30,14 @@ const computePace = (input: {
   const { usage, config, history, now, minutesUntilReset } = input;
   const { burn, minElapsed } = paceSettings(config, usage.provider);
   const windowMinutes = usage.windowMinutes ?? defaultWindowMinutes;
-  const elapsed = windowMinutes - minutesUntilReset;
+  const observed = Date.parse(usage.observedAt);
+  const elapsed = (observed - (Date.parse(usage.resetsAt) - windowMinutes * 60_000)) / 60_000;
   if (!Number.isFinite(elapsed) || elapsed < minElapsed || elapsed <= 0) return undefined;
   const avgRate = usage.weeklyUsedPercent / elapsed;
-  const observed = Date.parse(usage.observedAt);
   const recent = history
     .filter((sample) => sample.resetsAt === usage.resetsAt && Number.isFinite(Date.parse(sample.observedAt))
-      && now.getTime() - Date.parse(sample.observedAt) <= recentWindowMs && Date.parse(sample.observedAt) <= observed)
+      && now.getTime() - Date.parse(sample.observedAt) <= recentWindowMs && Date.parse(sample.observedAt) <= observed
+      && sample.identityHash === usage.identityHash)
     .sort((left, right) => Date.parse(left.observedAt) - Date.parse(right.observedAt));
   let recentRate = 0;
   const first = recent[0];

@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeSegment, main } from '../src/cli.js';
-import { dataDir, defaultConfig, defaultFeatures, readUsageHistory, saveConfig, saveUsage } from '../src/core/files.js';
+import { dataDir, defaultConfig, defaultFeatures, readHookSessions, readUsageHistory, saveConfig, saveHookSession, saveUsage } from '../src/core/files.js';
 import { hookMessage, runHook } from '../src/hook.js';
 import { statuslineSegment, withSegment } from '../src/core/notice.js';
 import type { UsageSnapshot } from '../src/core/types.js';
@@ -56,9 +56,33 @@ describe('usage history', () => {
       const next = { ...at(20, 2), resetsAt: new Date(now.getTime() + 14 * day).toISOString() };
       await saveUsage(next);
       const pruned = await readUsageHistory('claude');
-      expect(pruned).toEqual([{ observedAt: next.observedAt, used: 2, resetsAt: next.resetsAt }]);
+      expect(pruned).toEqual([{ observedAt: next.observedAt, used: 2, resetsAt: next.resetsAt, identityHash: 'id-1' }]);
       for (let index = 0; index < 320; index += 1) await saveUsage(at(30 + index * 11, 3 + index * 0.01, next));
       expect((await readUsageHistory('claude')).length).toBe(300);
+    });
+  });
+
+  it('merges concurrent history writes', async () => {
+    await withHome(async () => {
+      const first = { ...premiumUsage, observedAt: now.toISOString(), weeklyUsedPercent: 20 };
+      const second = { ...premiumUsage, observedAt: new Date(now.getTime() + 11 * 60_000).toISOString(), weeklyUsedPercent: 21 };
+      await Promise.all([saveUsage(first), saveUsage(second)]);
+      expect((await readUsageHistory('claude')).map((sample) => sample.used).sort()).toEqual([20, 21]);
+    });
+  });
+
+  it('merges concurrent hook session writes and keeps the newest same-session check', async () => {
+    await withHome(async () => {
+      await Promise.all([
+        saveHookSession('first', { state: 'premium', checkedAt: now.toISOString() }, now),
+        saveHookSession('second', { state: 'run-out', checkedAt: now.toISOString() }, now),
+      ]);
+      expect(Object.keys(await readHookSessions()).sort()).toEqual(['first', 'second']);
+      await Promise.all([
+        saveHookSession('same', { state: 'old', checkedAt: now.toISOString() }, now),
+        saveHookSession('same', { state: 'new', checkedAt: new Date(now.getTime() + 1_000).toISOString() }, now),
+      ]);
+      expect((await readHookSessions()).same?.state).toBe('new');
     });
   });
 
@@ -115,6 +139,17 @@ describe('hook output', () => {
     });
   });
 
+  it('returns empty when hook work remains pending beyond the hard budget', async () => {
+    await withHome(async () => {
+      vi.useFakeTimers();
+      try {
+        const pending = runHook('claude', 'session-start', () => new Promise<unknown>(() => {}), { now });
+        await vi.advanceTimersByTimeAsync(3_001);
+        await expect(pending).resolves.toBe('');
+      } finally { vi.useRealTimers(); }
+    });
+  });
+
   it('codex session start uses live discovery', async () => {
     await withHome(async () => {
       const discover = (): Promise<CodexDiscovery> => Promise.resolve({
@@ -125,6 +160,21 @@ describe('hook output', () => {
       expect(await hookMessage('codex', 'session-start', { session_id: 'c' }, { now, discover })).toBe(
         'surplus: premium window open · high effort · 80% left · resets in 4.0d → raise effort to high (/model)',
       );
+    });
+  });
+
+  it('recomputes and records Codex routing state while discovery is throttled', async () => {
+    await withHome(async () => {
+      await saveConfig({ ...defaultConfig, features: { ...defaultFeatures, promptNudge: true } });
+      const codexPremium = { ...premiumUsage, provider: 'codex' as const, identityHash: undefined };
+      await saveUsage(codexPremium);
+      const discover = (): Promise<CodexDiscovery> => Promise.resolve({
+        usage: codexPremium, effectiveModel: 'gpt-test', effectiveEffort: 'low', supportedEfforts: ['low', 'high'],
+        models: [{ model: 'gpt-test', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }],
+      });
+      expect(await hookMessage('codex', 'prompt-submit', { session_id: 'c' }, { now, discover })).toMatch(/just opened/);
+      await saveUsage({ ...codexPremium, weeklyUsedPercent: 60 });
+      expect(await hookMessage('codex', 'prompt-submit', { session_id: 'c' }, { now: new Date(now.getTime() + 60_000), discover: () => Promise.reject(new Error('throttled discovery ran')) })).toMatch(/pace now says you'll run out/);
     });
   });
 

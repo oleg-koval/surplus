@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import type { Features, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot } from './types.js';
@@ -30,6 +30,24 @@ export const atomicJson = async (path: string, value: unknown): Promise<void> =>
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await chmod(temporary, 0o600);
   await rename(temporary, destination);
+};
+
+const withFileLock = async <T>(path: string, operation: () => Promise<T>): Promise<T> => {
+  const lockPath = `${path}.lock`;
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const deadline = Date.now() + 100;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  while (!handle) {
+    try { handle = await open(lockPath, 'wx', 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      try { if (Date.now() - (await stat(lockPath)).mtimeMs > 10_000) await unlink(lockPath); } catch { /* A concurrent release may remove it. */ }
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for Surplus data lock.');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  try { return await operation(); }
+  finally { await handle.close(); await unlink(lockPath).catch(() => undefined); }
 };
 
 /**
@@ -108,11 +126,17 @@ export const readConfig = async (): Promise<SurplusConfig> => {
 };
 
 export const saveConfig = (config: SurplusConfig): Promise<void> => atomicJson(configPath(), config);
+export const updateConfig = async (update: (latest: SurplusConfig) => SurplusConfig): Promise<SurplusConfig> => withFileLock(configPath(), async () => {
+  const updated = update(await readConfig());
+  await atomicJson(configPath(), updated);
+  return updated;
+});
 export const maxHistoryEntries = 300;
 export const historyThrottleMinutes = 10;
 
 const isUsageSample = (value: unknown): value is UsageSample => typeof value === 'object' && value !== null
-  && typeof (value as UsageSample).observedAt === 'string' && typeof (value as UsageSample).used === 'number' && typeof (value as UsageSample).resetsAt === 'string';
+  && typeof (value as UsageSample).observedAt === 'string' && typeof (value as UsageSample).used === 'number' && typeof (value as UsageSample).resetsAt === 'string'
+  && ((value as UsageSample).identityHash === undefined || typeof (value as UsageSample).identityHash === 'string');
 
 /**
  * Reads saved history for the provider, retaining entries with the expected field types and returning an empty array for unreadable, malformed, or non-array data.
@@ -131,13 +155,16 @@ export const readUsageHistory = async (provider: Provider): Promise<UsageSample[
 const recordUsageHistory = async (usage: UsageSnapshot): Promise<void> => {
   const observed = Date.parse(usage.observedAt);
   if (!Number.isFinite(observed)) return;
-  const saved = await readUsageHistory(usage.provider);
-  const current = saved.filter((sample) => sample.resetsAt === usage.resetsAt);
-  const last = current.at(-1);
-  const due = last?.used !== usage.weeklyUsedPercent || observed - Date.parse(last.observedAt) >= historyThrottleMinutes * 60_000;
-  const next = due ? [...current, { observedAt: usage.observedAt, used: usage.weeklyUsedPercent, resetsAt: usage.resetsAt }].slice(-maxHistoryEntries) : current;
-  if (!(due || next.length !== saved.length)) return;
-  await atomicJson(historyPath(usage.provider), next);
+  const identityHash = usage.identityHash;
+  await withFileLock(historyPath(usage.provider), async () => {
+    const saved = await readUsageHistory(usage.provider);
+    const current = saved.filter((sample) => sample.resetsAt === usage.resetsAt && sample.identityHash === identityHash);
+    const last = current.at(-1);
+    const due = last?.used !== usage.weeklyUsedPercent || observed - Date.parse(last.observedAt) >= historyThrottleMinutes * 60_000;
+    const next = due ? [...current, { observedAt: usage.observedAt, used: usage.weeklyUsedPercent, resetsAt: usage.resetsAt, ...(identityHash ? { identityHash } : {}) }].slice(-maxHistoryEntries) : current;
+    if (!(due || next.length !== saved.length)) return;
+    await atomicJson(historyPath(usage.provider), next);
+  });
 };
 
 /**
@@ -173,15 +200,25 @@ export const readHookSessions = async (): Promise<Record<string, HookSessionReco
  * Performs filesystem IO and rejects on home-directory or write failures.
  */
 export const saveHookSession = async (sessionId: string, record: HookSessionRecord, now: Date): Promise<void> => {
-  const sessions = await readHookSessions();
-  const kept = Object.entries(sessions).filter(([key, value]) => key !== sessionId && now.getTime() - Date.parse(value.checkedAt) <= sessionRetentionMs);
-  await atomicJson(hookSessionsPath(), Object.fromEntries([...kept, [sessionId, record]]));
+  await withFileLock(hookSessionsPath(), async () => {
+    const sessions = await readHookSessions();
+    const existing = sessions[sessionId];
+    const selected = existing && Date.parse(existing.checkedAt) > Date.parse(record.checkedAt) ? existing : record;
+    const kept = Object.entries(sessions).filter(([key, value]) => key !== sessionId && now.getTime() - Date.parse(value.checkedAt) <= sessionRetentionMs);
+    await atomicJson(hookSessionsPath(), Object.fromEntries([...kept, [sessionId, selected]]));
+  });
 };
 export const readUsage = (provider: Provider): Promise<UsageSnapshot | undefined> => readJson<UsageSnapshot>(usagePath(provider));
 export const readState = (provider: Provider): Promise<ProviderState | undefined> => readJson<ProviderState>(statePath(provider));
 export const saveState = (provider: Provider, state: ProviderState): Promise<void> => atomicJson(statePath(provider), state);
 export const readClaudeIdentity = async (): Promise<string | undefined> => (await readJson<{ identityHash?: string }>(claudeIdentityPath()))?.identityHash;
-export const saveClaudeIdentity = (identityHash: string | undefined): Promise<void> => atomicJson(claudeIdentityPath(), { identityHash });
+export const saveClaudeIdentity = (identityHash: string | undefined, now = new Date()): Promise<void> => atomicJson(claudeIdentityPath(), { identityHash, checkedAt: now.toISOString() });
+/** Returns the saved identity only when it was resolved within maxAgeMs, so callers can skip spawning `claude auth status`. */
+export const readFreshClaudeIdentity = async (maxAgeMs: number, now = new Date()): Promise<string | undefined> => {
+  const saved = await readJson<{ identityHash?: string; checkedAt?: string }>(claudeIdentityPath());
+  const checked = Date.parse(saved?.checkedAt ?? '');
+  return typeof saved?.identityHash === 'string' && Number.isFinite(checked) && now.getTime() - checked <= maxAgeMs ? saved.identityHash : undefined;
+};
 export const defaultFeatures: Features = { sessionNotice: true, promptNudge: false, statuslineSegment: false };
 export const defaultConfig: SurplusConfig = {
   version: 1,

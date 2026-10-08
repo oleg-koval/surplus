@@ -100,6 +100,20 @@ describe('pace policy', () => {
     expect(decide({ usage: current, config, history: [sample(4, '2026-10-01T00:00:00.000Z')], now }).tier).toBe('premium');
   });
 
+  it('ignores history from a different identity even when the reset timestamp matches', () => {
+    const current = atElapsed(3, 20, { identityHash: 'account-b' });
+    const oldAccount = { observedAt: new Date(now.getTime() - 4 * 60 * 60_000).toISOString(), used: 12, resetsAt: current.resetsAt, identityHash: 'account-a' };
+    expect(decide({ usage: current, config, history: [oldAccount], now }).tier).toBe('premium');
+  });
+
+  it('measures pace and minimum elapsed time from when usage was observed', () => {
+    const observedEarlier = new Date(now.getTime() - 12 * 60 * 60_000);
+    const stale = atElapsed(1, 20, { observedAt: observedEarlier.toISOString() });
+    const decision = decide({ usage: stale, config: { ...config, maxTelemetryAgeMinutes: 24 * 60, minPaceElapsedMinutes: 2 * 60 }, now });
+    const observedElapsedMinutes = 12 * 60;
+    expect(decision.pace?.projectedUnusedPercent).toBeCloseTo(100 - (20 + (20 / observedElapsedMinutes) * 1.5 * decision.minutesUntilReset!), 5);
+  });
+
   it('honours the Codex window length and burn multiplier', () => {
     const codex = { ...usage, provider: 'codex' as const, sessionWindow: 'absent' as const, sessionUsedPercent: undefined, sessionResetsAt: undefined };
     const twoDayWindow = 2 * day;

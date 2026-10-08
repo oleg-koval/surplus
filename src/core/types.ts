@@ -18,6 +18,7 @@ export interface UsageSample {
   readonly observedAt: string;
   readonly used: number;
   readonly resetsAt: string;
+  readonly identityHash?: string;
 }
 
 export type Strategy = 'pace' | 'near-reset';
