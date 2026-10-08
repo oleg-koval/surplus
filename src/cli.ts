@@ -1,10 +1,13 @@
 import { spawn } from 'node:child_process';
 import { basename } from 'node:path';
 import { constants as osConstants } from 'node:os';
-import type { Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
+import type { Features, Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
 import { defaultConfig, readClaudeIdentity, readConfig, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
+import { statuslineSegment, withSegment } from './core/notice.js';
+import { runHook } from './hook.js';
+import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
 import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldAutomaticallyRoute } from './core/launch.js';
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from './install/shell.js';
 import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } from './providers/claude.js';
@@ -13,11 +16,13 @@ import { discoverCodex } from './providers/codex.js';
 const usageText = `Surplus — use more of your included AI coding allowance before it resets.
 
 Usage:
-  surplus install [--no-claude-capture]
+  surplus install [--no-claude-capture] [--no-hooks]
   surplus uninstall
   surplus status [claude|codex]
   surplus run <claude|codex> [provider arguments...]
   surplus configure <claude|codex> [--premium MODEL] [--effort LEVEL]
+  surplus configure features [--session-notice on|off] [--prompt-nudge on|off] [--statusline-segment on|off]
+  surplus hook <claude|codex> <session-start|prompt-submit>   (called by the provider, prints a short notice or nothing)
   surplus demo
 `;
 
@@ -33,19 +38,36 @@ const showDecision = (decision: ReturnType<typeof decide>): void => {
   process.stdout.write(`${decision.tier.toUpperCase()} · ${decision.model} · ${remaining} weekly remaining · reset in ${until}\n${decision.reason}\n`);
 };
 
+export const computeSegment = async (snapshot: UsageSnapshot): Promise<string> => {
+  try {
+    const config = await readConfig();
+    if (!config.features.statuslineSegment) return '';
+    const previous = await readState('claude');
+    const history = await readUsageHistory('claude');
+    const decision = decide({ usage: snapshot, config: config.providers.claude, ...(previous ? { previous } : {}), history });
+    return statuslineSegment(decision, config.providers.claude);
+  } catch { return ''; }
+};
+
 const runStatusLine = async (args: readonly string[]): Promise<void> => {
   const input = await readStatusLineInput();
+  let segment = '';
   try {
     const snapshot = parseClaudeStatusLine(input);
     const identityHash = process.env.SURPLUS_CLAUDE_IDENTITY_HASH;
-    if (snapshot && identityHash) await saveUsage({ ...snapshot, identityHash });
+    if (snapshot && identityHash) {
+      const captured = { ...snapshot, identityHash };
+      await saveUsage(captured);
+      segment = await computeSegment(captured);
+    }
   } catch { /* Preserve the existing user's statusline even if capture fails. */ }
+  const emit = (text: string): void => { process.stdout.write(withSegment(text, segment)); };
 
   const encoded = args.find((arg) => arg.startsWith('--original='))?.slice('--original='.length);
-  if (!encoded) return;
+  if (!encoded) { emit(''); return; }
   let command: string;
-  try { command = Buffer.from(encoded, 'base64').toString('utf8'); } catch { return; }
-  if (!command) return;
+  try { command = Buffer.from(encoded, 'base64').toString('utf8'); } catch { emit(''); return; }
+  if (!command) { emit(''); return; }
   const child = spawn('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
   const terminateGroup = (): void => {
     try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
@@ -93,7 +115,7 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
     child.once('error', finish);
     child.once('close', finish);
   });
-  process.stdout.write(Buffer.concat(outputChunks, outputBytes).toString('utf8'));
+  emit(Buffer.concat(outputChunks, outputBytes).toString('utf8'));
   if (outputState.truncated) process.stderr.write(`Surplus: chained Claude statusline output exceeded ${String(maxChainedStatusLineOutputBytes)} bytes and was truncated.\n`);
   if (receivedSignal) {
     const signalNumber = osSignalNumber(receivedSignal);
@@ -152,9 +174,11 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
     selected = appendModel(provider, result.decision.model, selected);
     selected = appendEffort(provider, result.decision.effort ?? result.premiumEffort, selected);
   }
-  const childEnv = provider === 'claude' && result.identityHash
-    ? { ...process.env, SURPLUS_CLAUDE_IDENTITY_HASH: result.identityHash }
-    : process.env;
+  const childEnv = {
+    ...process.env,
+    ...(provider === 'claude' && result.identityHash ? { SURPLUS_CLAUDE_IDENTITY_HASH: result.identityHash } : {}),
+    ...(result.decision.tier === 'premium' ? { SURPLUS_ROUTED_TIER: 'premium' } : {}),
+  };
   const onStarted = async (): Promise<void> => {
     try { await saveState(provider, { tier: result.decision.tier, resetAt: result.usage?.resetsAt ?? '', observedAt: new Date().toISOString() }); } catch { /* Local routing state never controls provider launch or exit status. */ }
     if (provider === 'claude' && result.identityHash) {
@@ -193,6 +217,29 @@ const configure = async (provider: Provider, args: string[]): Promise<void> => {
   process.stdout.write(`Saved ${provider} preferences in the private Surplus config.\n`);
 };
 
+const featureFlags: Readonly<Record<string, keyof Features>> = {
+  '--session-notice': 'sessionNotice', '--prompt-nudge': 'promptNudge', '--statusline-segment': 'statuslineSegment',
+};
+
+const configureFeatures = async (args: string[]): Promise<void> => {
+  const config = await readConfig();
+  const next: Record<string, boolean> = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index] ?? '';
+    const value = args[index + 1];
+    const key = featureFlags[flag];
+    if (!key || (value !== 'on' && value !== 'off')) throw new Error('Use --session-notice, --prompt-nudge or --statusline-segment with on or off.');
+    next[key] = value === 'on';
+  }
+  const features: Features = { ...config.features, ...next };
+  const snapshots = await syncHooks(features);
+  try { await saveConfig({ ...config, features }); } catch (error) {
+    try { await restoreHooks(snapshots); } catch { /* The save failure is the primary error. */ }
+    throw error;
+  }
+  process.stdout.write(`Saved features: session notice ${features.sessionNotice ? 'on' : 'off'}, prompt nudge ${features.promptNudge ? 'on' : 'off'}, statusline segment ${features.statuslineSegment ? 'on' : 'off'}.\n`);
+};
+
 const demo = (): void => {
   const now = new Date('2026-10-07T12:00:00.000Z');
   const sample: UsageSnapshot = {
@@ -204,14 +251,33 @@ const demo = (): void => {
   showDecision(decide({ usage: sample, config: defaultConfig.providers.claude, now }));
 };
 
+let forceExit = false;
+
 export const main = async (args = process.argv.slice(2)): Promise<void> => {
   const [command, first, ...rest] = args;
   if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usageText); return; }
   if (command === 'capture' && first === 'claude') { await runStatusLine(rest); return; }
+  if (command === 'hook') {
+    const event = rest[0];
+    const output = isProvider(first) && (event === 'session-start' || event === 'prompt-submit')
+      ? await runHook(first, event, readStatusLineInput) : '';
+    if (output) process.stdout.write(output);
+    process.exitCode = 0;
+    forceExit = true;
+    return;
+  }
   if (command === 'install') {
-    const captureInstalled = first !== '--no-claude-capture' && !rest.includes('--no-claude-capture')
-      ? await installClaudeStatusLine() : false;
+    const flags = [first, ...rest];
+    const captureInstalled = !flags.includes('--no-claude-capture') ? await installClaudeStatusLine() : false;
+    let hookSnapshots: Awaited<ReturnType<typeof syncHooks>> = [];
+    try {
+      if (!flags.includes('--no-hooks')) hookSnapshots = await syncHooks((await readConfig()).features);
+    } catch (error) {
+      if (captureInstalled) await uninstallClaudeStatusLine();
+      throw error;
+    }
     try { await installShell(); } catch (error) {
+      try { await restoreHooks(hookSnapshots); } catch { /* Report the original install failure. */ }
       if (captureInstalled) await uninstallClaudeStatusLine();
       throw error;
     }
@@ -220,7 +286,7 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
   }
   if (command === 'uninstall') {
     const failures: unknown[] = [];
-    for (const operation of [uninstallClaudeStatusLine, uninstallShell]) {
+    for (const operation of [uninstallClaudeStatusLine, uninstallHooks, uninstallShell]) {
       try { await operation(); } catch (error) { failures.push(error); }
     }
     if (failures.length > 0) {
@@ -232,6 +298,7 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
   }
   if (command === 'demo') { demo(); return; }
   if (command === 'status' && isProvider(first)) { await status(first); return; }
+  if (command === 'configure' && first === 'features') { await configureFeatures(rest); return; }
   if (command === 'configure' && isProvider(first)) { await configure(first, rest); return; }
   if (command === 'run' && isProvider(first)) { await run(first, rest); return; }
   if (isProvider(command)) { await run(command, [first, ...rest].filter((value): value is string => value !== undefined)); return; }
@@ -240,8 +307,11 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
 };
 
 if (process.argv[1] && ['cli.js', 'surplus'].includes(basename(process.argv[1]))) {
-  void main().catch((error: unknown) => {
+  void main().then(() => {
+    // Hooks must never linger on a slow provider probe; exit once stdout is flushed.
+    if (forceExit) process.stdout.write('', () => { process.exit(0); });
+  }).catch((error: unknown) => {
     process.stderr.write(`surplus: ${error instanceof Error ? error.message : 'unknown error'}\n`);
-    process.exitCode = 1;
+    process.exitCode = forceExit ? 0 : 1;
   });
 }
