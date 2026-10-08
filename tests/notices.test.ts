@@ -8,6 +8,7 @@ import { hookMessage, runHook } from '../src/hook.js';
 import { statuslineSegment, withSegment } from '../src/core/notice.js';
 import type { UsageSnapshot } from '../src/core/types.js';
 import { discoverCodex } from '../src/providers/codex.js';
+import type { CodexDiscovery } from '../src/providers/codex.js';
 
 const homes: string[] = [];
 const savedEnv = new Map<string, string | undefined>();
@@ -116,8 +117,14 @@ describe('hook output', () => {
 
   it('codex session start uses live discovery', async () => {
     await withHome(async () => {
-      const discover = (): Promise<undefined> => Promise.resolve(undefined);
-      expect(await hookMessage('codex', 'session-start', { session_id: 'c' }, { now, discover })).toBeUndefined();
+      const discover = (): Promise<CodexDiscovery> => Promise.resolve({
+        usage: { ...premiumUsage, provider: 'codex' },
+        effectiveModel: 'gpt-test', effectiveEffort: 'low', supportedEfforts: ['low', 'high'],
+        models: [{ model: 'gpt-test', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }],
+      });
+      expect(await hookMessage('codex', 'session-start', { session_id: 'c' }, { now, discover })).toBe(
+        'surplus: premium window open · high effort · 80% left · resets in 4.0d → raise effort to high (/model)',
+      );
     });
   });
 
