@@ -146,6 +146,7 @@ export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | 
           resetsAt, sessionWindow: sessionStatus,
           ...(sessionWindow && sessionResetsAt ? { sessionUsedPercent: sessionWindow.usedPercent as number, sessionResetsAt } : {}),
           usageAllowed: typeof limits.ordinaryUsageAllowed === 'boolean' ? limits.ordinaryUsageAllowed : null,
+          ...(isNumber(window.windowDurationMins) ? { windowMinutes: window.windowDurationMins } : {}),
         };
       }
     }

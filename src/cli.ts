@@ -4,7 +4,7 @@ import { constants as osConstants } from 'node:os';
 import type { Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { defaultConfig, readClaudeIdentity, readConfig, readState, readUsage, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
+import { defaultConfig, readClaudeIdentity, readConfig, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
 import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldAutomaticallyRoute } from './core/launch.js';
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from './install/shell.js';
 import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } from './providers/claude.js';
@@ -117,17 +117,18 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
   const config = await readConfig();
   const providerConfig = configured(config, provider);
   const previous = await readState(provider);
+  const history = await readUsageHistory(provider);
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
     const usage = claude.usage;
-    const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}) });
+    const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history });
     return { decision, ...(usage ? { usage } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
   const discovery = await discoverCodex();
   const usage = discovery?.usage;
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
-  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}) });
+  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history });
   return { decision, ...(usage ? { usage } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
@@ -188,7 +189,7 @@ const configure = async (provider: Provider, args: string[]): Promise<void> => {
     ...(next['--effort'] ? { premiumEffort: next['--effort'] } : {}),
   };
   const providers = { ...config.providers, [provider]: updated };
-  await saveConfig({ version: 1, providers });
+  await saveConfig({ version: 1, providers, features: config.features });
   process.stdout.write(`Saved ${provider} preferences in the private Surplus config.\n`);
 };
 
