@@ -1,6 +1,6 @@
 {
   "name": "surplus-cli",
-  "version": "0.2.0-beta.2",
+  "version": "0.2.0-beta.3",
   "description": "Use more of your included AI coding allowance before it resets.",
   "type": "module",
   "license": "MIT",

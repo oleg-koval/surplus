@@ -1,3 +1,10 @@
+# [0.2.0-beta.3](https://github.com/oleg-koval/surplus/compare/v0.2.0-beta.2...v0.2.0-beta.3) (2026-10-08)
+
+
+### 🐛 Bug Fixes
+
+* address PR [#7](https://github.com/oleg-koval/surplus/issues/7) review comments ([#9](https://github.com/oleg-koval/surplus/issues/9)) ([586e627](https://github.com/oleg-koval/surplus/commit/586e627694ca061e1a38cb900e1c36827567007a))
+
 # [0.2.0-beta.2](https://github.com/oleg-koval/surplus/compare/v0.2.0-beta.1...v0.2.0-beta.2) (2026-10-08)
 
 
