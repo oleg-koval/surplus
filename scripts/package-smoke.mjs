@@ -20,6 +20,7 @@ try {
   const state = join(home, 'state');
   const config = join(home, 'config');
   const fakeBin = join(fixture, 'provider-bin');
+  process.env.npm_config_cache = join(fixture, 'npm-cache');
   await Promise.all([mkdir(packDir), mkdir(prefix), mkdir(home), mkdir(fakeBin)]);
   await mkdir(join(home, '.claude'));
   const priorStatusLine = { type: 'command', command: "printf 'original statusline'", padding: 4 };
@@ -32,8 +33,12 @@ try {
   const env = {
     ...process.env,
     HOME: home,
+    CLAUDE_CONFIG_DIR: join(home, '.claude'),
+    CODEX_HOME: join(home, '.codex'),
     XDG_STATE_HOME: state,
     XDG_CONFIG_HOME: config,
+    XDG_CACHE_HOME: join(home, 'cache'),
+    npm_config_cache: join(fixture, 'npm-cache'),
     SHELL: '/bin/zsh',
   };
   run(surplus, ['install'], { env });
@@ -69,6 +74,11 @@ try {
   assert.match(captured.stdout, /original statusline/);
   const usage = JSON.parse(await readFile(join(state, 'surplus', 'claude-usage.json'), 'utf8'));
   assert.equal(usage.identityHash, identityHash, 'the first captured sample must bind to the active account');
+  const directEnv = { ...launchEnv };
+  delete directEnv.SURPLUS_CLAUDE_IDENTITY_HASH;
+  const directCapture = spawnSync(surplus, ['capture', 'claude'], { encoding: 'utf8', env: directEnv, input: sample });
+  assert.equal(directCapture.status, 0, `direct-session capture should resolve its active identity: ${directCapture.stderr}`);
+  assert.equal(JSON.parse(await readFile(join(state, 'surplus', 'claude-usage.json'), 'utf8')).identityHash, identityHash);
   const first = spawnSync(wrapper, ['task'], { encoding: 'utf8', env: launchEnv });
   assert.equal(first.status, 7, `the original provider exit code must survive (${first.status}): ${first.stdout}\n${first.stderr}`);
   const firstArgs = await readFile(argsPath, 'utf8');

@@ -30,7 +30,7 @@ const decideFor = async (provider: Provider, config: ProviderConfig, discovery: 
 };
 
 /**
- * Returns a hook notice or undefined when disabled, unremarkable, unchanged on prompt submission, or throttled within ten minutes of a prior Codex session check.
+ * Returns a hook notice or undefined when disabled, unremarkable, or unchanged on prompt submission.
  * Performs filesystem IO, may probe Codex, and attempts to persist usage and session state; input supplies session_id and model, while deps overrides the clock, environment, or discovery.
  * Rejects on configuration, path-resolution, or uncaught discovery failures; cache and session write failures are ignored.
  */
@@ -53,15 +53,17 @@ export const hookMessage = async (provider: Provider, event: HookEvent, input: u
     const cached = await readUsage('claude');
     if (identity && cached?.identityHash === identity) usage = cached;
   } else {
-    if (prior && now.getTime() - Date.parse(prior.checkedAt) < codexRefreshThrottleMs) return undefined;
-    discovery = await (deps.discover ?? (() => discoverCodex(now)))();
-    usage = discovery?.usage;
+    if (prior && now.getTime() - Date.parse(prior.checkedAt) < codexRefreshThrottleMs) usage = await readUsage('codex');
+    else {
+      discovery = await (deps.discover ?? (() => discoverCodex(now)))();
+      usage = discovery?.usage;
+    }
     if (usage) { try { await saveUsage(usage); } catch { /* Cache write is best-effort. */ } }
   }
 
   const { decision, config: effective } = await decideFor(provider, config.providers[provider], discovery, usage, now);
   const state = noticeState(decision);
-  const routedPremium = env.SURPLUS_ROUTED_TIER === 'premium';
+  const routedPremium = provider === 'claude' && env.SURPLUS_ROUTED_TIER === 'premium';
   const message = event === 'session-start'
     ? sessionStartMessage({ decision, config: effective, ...(sessionModel ? { sessionModel } : {}), routedPremium })
     : promptSubmitMessage({ previous: (prior?.state as 'premium' | 'run-out' | 'none' | undefined) ?? 'none', decision, config: effective, ...(sessionModel ? { sessionModel } : {}), routedPremium });

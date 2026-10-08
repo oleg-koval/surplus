@@ -4,7 +4,7 @@ import { constants as osConstants } from 'node:os';
 import type { Features, Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
+import { defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveState, saveUsage, updateConfig } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
 import { runHook } from './hook.js';
 import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
@@ -31,6 +31,15 @@ const configured = (config: Awaited<ReturnType<typeof readConfig>>, provider: Pr
 const minutes = (value: number): string => `${String(value)}m`;
 const osSignalNumber = (signal: NodeJS.Signals): number | undefined => osConstants.signals[signal];
 const maxChainedStatusLineOutputBytes = 1024 * 1024;
+const identityCacheMs = 10 * 60_000;
+
+export const routedChildEnvironment = (provider: Provider, identityHash: string | undefined, tier: 'default' | 'premium', parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
+  const child: NodeJS.ProcessEnv = { ...parent };
+  if (provider === 'claude' && identityHash) child.SURPLUS_CLAUDE_IDENTITY_HASH = identityHash;
+  if (tier === 'premium') child.SURPLUS_ROUTED_TIER = 'premium';
+  else delete child.SURPLUS_ROUTED_TIER;
+  return child;
+};
 
 const showDecision = (decision: ReturnType<typeof decide>): void => {
   const remaining = decision.weeklyRemainingPercent === null ? 'unknown' : `${decision.weeklyRemainingPercent.toFixed(1)}%`;
@@ -63,7 +72,12 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
   let segment = '';
   try {
     const snapshot = parseClaudeStatusLine(input);
-    const identityHash = process.env.SURPLUS_CLAUDE_IDENTITY_HASH;
+    // Direct (non-wrapper) sessions resolve the account at most every 10 minutes; the statusline fires every few seconds.
+    let identityHash = process.env.SURPLUS_CLAUDE_IDENTITY_HASH ?? await readFreshClaudeIdentity(identityCacheMs);
+    if (!identityHash) {
+      identityHash = readClaudeIdentityHash();
+      if (identityHash) { try { await saveClaudeIdentity(identityHash); } catch { /* Identity cache is best-effort. */ } }
+    }
     if (snapshot && identityHash) {
       const captured = { ...snapshot, identityHash };
       await saveUsage(captured);
@@ -192,11 +206,7 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
     selected = appendModel(provider, result.decision.model, selected);
     selected = appendEffort(provider, result.decision.effort ?? result.premiumEffort, selected);
   }
-  const childEnv = {
-    ...process.env,
-    ...(provider === 'claude' && result.identityHash ? { SURPLUS_CLAUDE_IDENTITY_HASH: result.identityHash } : {}),
-    ...(result.decision.tier === 'premium' ? { SURPLUS_ROUTED_TIER: 'premium' } : {}),
-  };
+  const childEnv = routedChildEnvironment(provider, result.identityHash, result.decision.tier);
   const onStarted = async (): Promise<void> => {
     try { await saveState(provider, { tier: result.decision.tier, resetAt: result.usage?.resetsAt ?? '', observedAt: new Date().toISOString() }); } catch { /* Local routing state never controls provider launch or exit status. */ }
     if (provider === 'claude' && result.identityHash) {
@@ -219,8 +229,6 @@ const status = async (provider: Provider): Promise<void> => {
  * Performs filesystem IO and writes a confirmation; invalid arguments and configuration read, validation, or write failures reject.
  */
 const configure = async (provider: Provider, args: string[]): Promise<void> => {
-  const config = await readConfig();
-  const current = configured(config, provider);
   const next: Record<string, string> = {};
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
@@ -229,13 +237,14 @@ const configure = async (provider: Provider, args: string[]): Promise<void> => {
     next[flag ?? ''] = value;
     index += 1;
   }
-  const updated: ProviderConfig = {
-    ...current,
-    ...(next['--premium'] ? { premiumModel: next['--premium'] } : {}),
-    ...(next['--effort'] ? { premiumEffort: next['--effort'] } : {}),
-  };
-  const providers = { ...config.providers, [provider]: updated };
-  await saveConfig({ version: 1, providers, features: config.features });
+  await updateConfig((latest) => {
+    const latestUpdated: ProviderConfig = {
+      ...configured(latest, provider),
+      ...(next['--premium'] ? { premiumModel: next['--premium'] } : {}),
+      ...(next['--effort'] ? { premiumEffort: next['--effort'] } : {}),
+    };
+    return { ...latest, providers: { ...latest.providers, [provider]: latestUpdated } };
+  });
   process.stdout.write(`Saved ${provider} preferences in the private Surplus config.\n`);
 };
 
@@ -249,7 +258,6 @@ const featureFlags: Readonly<Record<string, keyof Features>> = {
  * A settings-save failure remains the rejection even when its hook rollback also fails.
  */
 const configureFeatures = async (args: string[]): Promise<void> => {
-  const config = await readConfig();
   const next: Record<string, boolean> = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index] ?? '';
@@ -258,13 +266,9 @@ const configureFeatures = async (args: string[]): Promise<void> => {
     if (!key || (value !== 'on' && value !== 'off')) throw new Error('Use --session-notice, --prompt-nudge or --statusline-segment with on or off.');
     next[key] = value === 'on';
   }
-  const features: Features = { ...config.features, ...next };
-  const snapshots = await syncHooks(features);
-  try { await saveConfig({ ...config, features }); } catch (error) {
-    try { await restoreHooks(snapshots); } catch { /* The save failure is the primary error. */ }
-    throw error;
-  }
-  process.stdout.write(`Saved features: session notice ${features.sessionNotice ? 'on' : 'off'}, prompt nudge ${features.promptNudge ? 'on' : 'off'}, statusline segment ${features.statuslineSegment ? 'on' : 'off'}.\n`);
+  const updated = await updateConfig((latest) => ({ ...latest, features: { ...latest.features, ...next } }));
+  await syncHooks(updated.features);
+  process.stdout.write(`Saved features: session notice ${updated.features.sessionNotice ? 'on' : 'off'}, prompt nudge ${updated.features.promptNudge ? 'on' : 'off'}, statusline segment ${updated.features.statuslineSegment ? 'on' : 'off'}.\n`);
 };
 
 const demo = (): void => {

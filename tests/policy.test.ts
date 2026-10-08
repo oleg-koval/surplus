@@ -123,6 +123,30 @@ describe('pace policy', () => {
     expect(decide({ usage: current, config, history: [sample(4, '2026-10-01T00:00:00.000Z')], now }).tier).toBe('premium');
   });
 
+  it('ignores history from a different identity even when the reset timestamp matches', () => {
+    const current = atElapsed(3, 20, { identityHash: 'account-b' });
+    const oldAccount = { observedAt: new Date(now.getTime() - 4 * 60 * 60_000).toISOString(), used: 12, resetsAt: current.resetsAt, identityHash: 'account-a' };
+    expect(decide({ usage: current, config, history: [oldAccount], now }).tier).toBe('premium');
+  });
+
+  it('measures pace and minimum elapsed time from when usage was observed', () => {
+    const observedEarlier = new Date(now.getTime() - 12 * 60 * 60_000);
+    const stale = atElapsed(1, 20, { observedAt: observedEarlier.toISOString() });
+    const decision = decide({ usage: stale, config: { ...config, maxTelemetryAgeMinutes: 24 * 60, minPaceElapsedMinutes: 2 * 60 }, now });
+    const observedElapsedMinutes = 12 * 60;
+    const minutesFromObservation = Math.round((Date.parse(stale.resetsAt) - observedEarlier.getTime()) / 60_000);
+    expect(decision.pace?.projectedUnusedPercent).toBeCloseTo(100 - (20 + (20 / observedElapsedMinutes) * 1.5 * minutesFromObservation), 5);
+  });
+
+  it('projects from when usage was observed, so time since observation cannot overstate unused allowance', () => {
+    // 27.6% used, observed 2h ago with 4d to reset: projecting over 4d leaves ~15.6% (premium), over 4d2h ~14.4% (default).
+    const observedEarlier = new Date(now.getTime() - 2 * 60 * 60_000);
+    const stale = atElapsed(3, 27.6, { observedAt: observedEarlier.toISOString() });
+    const decision = decide({ usage: stale, config: { ...config, maxTelemetryAgeMinutes: 3 * 60 }, now });
+    expect(decision.pace?.projectedUnusedPercent).toBeCloseTo(100 - 27.6 * (1 + 1.5 * (98 * 60) / (70 * 60)), 5);
+    expect(decision.tier).toBe('default');
+  });
+
   it('honours the Codex window length and burn multiplier', () => {
     const codex = { ...usage, provider: 'codex' as const, sessionWindow: 'absent' as const, sessionUsedPercent: undefined, sessionResetsAt: undefined };
     const twoDayWindow = 2 * day;
