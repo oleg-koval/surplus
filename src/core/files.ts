@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import type { Features, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot } from './types.js';
+import type { Features, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
 import { surplusDataDirectory, xdgDirectory } from './xdg.js';
 
 export const dataDir = (): string => surplusDataDirectory();
@@ -9,6 +9,7 @@ export const configPath = (): string => join(xdgDirectory('config'), 'surplus', 
 const usagePath = (provider: Provider): string => join(dataDir(), `${provider}-usage.json`);
 const statePath = (provider: Provider): string => join(dataDir(), `${provider}-state.json`);
 const historyPath = (provider: Provider): string => join(dataDir(), `${provider}-usage-history.json`);
+const forecastPath = (provider: Provider): string => join(dataDir(), `${provider}-forecast.json`);
 const hookSessionsPath = (): string => join(dataDir(), 'hook-sessions.json');
 const claudeIdentityPath = (): string => join(dataDir(), 'claude-identity.json');
 
@@ -148,6 +149,40 @@ const isUsageSample = (value: unknown): value is UsageSample => typeof value ===
 export const readUsageHistory = async (provider: Provider): Promise<UsageSample[]> => {
   const saved = await readJson<unknown>(historyPath(provider));
   return Array.isArray(saved) ? saved.filter(isUsageSample) : [];
+};
+
+const isWorkloadForecast = (value: unknown): value is WorkloadForecast => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return (row.provider === 'claude' || row.provider === 'codex')
+    && typeof row.resetAt === 'string' && Number.isFinite(Date.parse(row.resetAt))
+    && typeof row.expectedUsagePercent === 'number' && Number.isFinite(row.expectedUsagePercent)
+    && row.expectedUsagePercent >= 0 && row.expectedUsagePercent <= 100
+    && (row.source === 'explicit' || row.source === 'history')
+    && typeof row.setAt === 'string' && Number.isFinite(Date.parse(row.setAt));
+};
+
+/** Reads a valid local forecast, ignoring malformed state so routing can fail safe. */
+export const readForecast = (provider: Provider): Promise<WorkloadForecast | undefined> =>
+  readJson<unknown>(forecastPath(provider)).then((saved) => isWorkloadForecast(saved) && saved.provider === provider ? saved : undefined);
+
+/** Reads a forecast only when it belongs to the provider's current reset window. */
+export const readActiveForecast = async (provider: Provider, resetAt: string): Promise<WorkloadForecast | undefined> => {
+  const forecast = await readForecast(provider);
+  return forecast?.resetAt === resetAt ? forecast : undefined;
+};
+
+/** Atomically persists a validated local workload forecast. */
+export const saveForecast = async (forecast: WorkloadForecast): Promise<void> => {
+  if (!isWorkloadForecast(forecast)) throw new Error('Workload forecast is invalid.');
+  await withFileLock(forecastPath(forecast.provider), async () => atomicJson(forecastPath(forecast.provider), forecast));
+};
+
+/** Removes a provider's forecast; absence is already a successful clear. */
+export const clearForecast = async (provider: Provider): Promise<void> => {
+  await withFileLock(forecastPath(provider), async () => unlink(forecastPath(provider)).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }));
 };
 
 /**

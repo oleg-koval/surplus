@@ -51,6 +51,14 @@ export interface SurplusConfig {
   readonly features: Features;
 }
 
+export interface WorkloadForecast {
+  readonly provider: Provider;
+  readonly resetAt: string;
+  readonly expectedUsagePercent: number;
+  readonly source: 'explicit' | 'history';
+  readonly setAt: string;
+}
+
 export interface ProviderState {
   readonly tier: 'default' | 'premium';
   readonly resetAt: string;

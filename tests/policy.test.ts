@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decide } from '../src/core/policy.js';
 import { defaultConfig } from '../src/core/files.js';
-import type { ProviderState, UsageSnapshot } from '../src/core/types.js';
+import type { ProviderState, UsageSnapshot, WorkloadForecast } from '../src/core/types.js';
 
 const now = new Date('2026-10-07T12:00:00.000Z');
 const usage: UsageSnapshot = {
@@ -158,5 +158,43 @@ describe('pace policy', () => {
       .not.toBeCloseTo(decide({ usage: inWindow, config: defaultConfig.providers.codex, now }).pace?.projectedUnusedPercent ?? 0, 0);
     const hungry = { ...defaultConfig.providers.codex, premiumBurnMultiplier: 4 };
     expect(decide({ usage: inWindow, config: hungry, now }).tier).toBe('default');
+  });
+
+  it('uses a matching reset-scoped workload forecast as additional headroom', () => {
+    const candidate = { ...usage, weeklyUsedPercent: 70 };
+    const forecast: WorkloadForecast = {
+      provider: 'claude', resetAt: candidate.resetsAt, expectedUsagePercent: 26, source: 'explicit', setAt: now.toISOString(),
+    };
+    expect(decide({ usage: candidate, config: nearReset, now }).tier).toBe('premium');
+    const decision = decide({ usage: candidate, config: nearReset, forecast, now });
+    expect(decision.tier).toBe('default');
+    expect(decision.reason).toMatch(/workload forecast/i);
+    expect(decision.reason).toMatch(/effective expected usage: 26%/i);
+  });
+
+  it('does not let a low forecast weaken the configured baseline', () => {
+    const forecast: WorkloadForecast = {
+      provider: 'claude', resetAt: usage.resetsAt, expectedUsagePercent: 0, source: 'explicit', setAt: now.toISOString(),
+    };
+    const baseline = decide({ usage, config, now });
+    const decision = decide({ usage, config, forecast, now });
+    expect(decision.tier).toBe(baseline.tier);
+    expect(decision.model).toBe(baseline.model);
+    expect(decision.weeklyRemainingPercent).toBe(baseline.weeklyRemainingPercent);
+    expect(decision.pace).toEqual(baseline.pace);
+    expect(decision.reason).toMatch(/effective expected usage: 5%/i);
+  });
+
+  it('ignores a forecast from another provider or reset window', () => {
+    const candidate = { ...usage, weeklyUsedPercent: 70 };
+    const wrongProvider: WorkloadForecast = {
+      provider: 'codex', resetAt: candidate.resetsAt, expectedUsagePercent: 26, source: 'explicit', setAt: now.toISOString(),
+    };
+    const wrongReset: WorkloadForecast = {
+      provider: 'claude', resetAt: '2026-10-06T12:00:00.000Z', expectedUsagePercent: 26, source: 'explicit', setAt: now.toISOString(),
+    };
+    const baseline = decide({ usage: candidate, config: nearReset, now });
+    expect(decide({ usage: candidate, config: nearReset, forecast: wrongProvider, now })).toEqual(baseline);
+    expect(decide({ usage: candidate, config: nearReset, forecast: wrongReset, now })).toEqual(baseline);
   });
 });
