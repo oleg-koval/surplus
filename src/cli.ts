@@ -1,23 +1,28 @@
 import { spawn } from 'node:child_process';
 import { basename } from 'node:path';
 import { constants as osConstants } from 'node:os';
-import type { Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
+import type { Features, Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { defaultConfig, readClaudeIdentity, readConfig, readState, readUsage, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
+import { defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveState, saveUsage, updateConfig } from './core/files.js';
+import { statuslineSegment, withSegment } from './core/notice.js';
+import { runHook } from './hook.js';
+import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
 import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldAutomaticallyRoute } from './core/launch.js';
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from './install/shell.js';
 import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } from './providers/claude.js';
-import { discoverCodex } from './providers/codex.js';
+import { discoverCodex, killCodexAppServers } from './providers/codex.js';
 
 const usageText = `Surplus — use more of your included AI coding allowance before it resets.
 
 Usage:
-  surplus install [--no-claude-capture]
+  surplus install [--no-claude-capture] [--no-hooks]
   surplus uninstall
   surplus status [claude|codex]
   surplus run <claude|codex> [provider arguments...]
   surplus configure <claude|codex> [--premium MODEL] [--effort LEVEL]
+  surplus configure features [--session-notice on|off] [--prompt-nudge on|off] [--statusline-segment on|off]
+  surplus hook <claude|codex> <session-start|prompt-submit>   (called by the provider, prints a short notice or nothing)
   surplus demo
 `;
 
@@ -26,6 +31,15 @@ const configured = (config: Awaited<ReturnType<typeof readConfig>>, provider: Pr
 const minutes = (value: number): string => `${String(value)}m`;
 const osSignalNumber = (signal: NodeJS.Signals): number | undefined => osConstants.signals[signal];
 const maxChainedStatusLineOutputBytes = 1024 * 1024;
+const identityCacheMs = 10 * 60_000;
+
+export const routedChildEnvironment = (provider: Provider, identityHash: string | undefined, tier: 'default' | 'premium', parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
+  const child: NodeJS.ProcessEnv = { ...parent };
+  if (provider === 'claude' && identityHash) child.SURPLUS_CLAUDE_IDENTITY_HASH = identityHash;
+  if (tier === 'premium') child.SURPLUS_ROUTED_TIER = 'premium';
+  else delete child.SURPLUS_ROUTED_TIER;
+  return child;
+};
 
 const showDecision = (decision: ReturnType<typeof decide>): void => {
   const remaining = decision.weeklyRemainingPercent === null ? 'unknown' : `${decision.weeklyRemainingPercent.toFixed(1)}%`;
@@ -33,19 +47,50 @@ const showDecision = (decision: ReturnType<typeof decide>): void => {
   process.stdout.write(`${decision.tier.toUpperCase()} · ${decision.model} · ${remaining} weekly remaining · reset in ${until}\n${decision.reason}\n`);
 };
 
+/**
+ * Reads Claude settings, routing state, and history to return a statusline segment for the captured snapshot.
+ * Performs filesystem IO and resolves to an empty string when disabled, unremarkable, or any operation fails.
+ */
+export const computeSegment = async (snapshot: UsageSnapshot): Promise<string> => {
+  try {
+    const config = await readConfig();
+    if (!config.features.statuslineSegment) return '';
+    const previous = await readState('claude');
+    const history = await readUsageHistory('claude');
+    const decision = decide({ usage: snapshot, config: config.providers.claude, ...(previous ? { previous } : {}), history });
+    return statuslineSegment(decision, config.providers.claude);
+  } catch { return ''; }
+};
+
+/**
+ * Captures identity-bound Claude usage from stdin and writes the optional segment alongside output from the base64 shell command in --original.
+ * Performs filesystem and process IO, limits chained output to one MiB and its wait to two seconds, and sets exit status when interrupted.
+ * Capture failures are ignored; input-read failures reject.
+ */
 const runStatusLine = async (args: readonly string[]): Promise<void> => {
   const input = await readStatusLineInput();
+  let segment = '';
   try {
     const snapshot = parseClaudeStatusLine(input);
-    const identityHash = process.env.SURPLUS_CLAUDE_IDENTITY_HASH;
-    if (snapshot && identityHash) await saveUsage({ ...snapshot, identityHash });
+    // Direct (non-wrapper) sessions resolve the account at most every 10 minutes; the statusline fires every few seconds.
+    let identityHash = process.env.SURPLUS_CLAUDE_IDENTITY_HASH ?? await readFreshClaudeIdentity(identityCacheMs);
+    if (!identityHash) {
+      identityHash = readClaudeIdentityHash();
+      if (identityHash) { try { await saveClaudeIdentity(identityHash); } catch { /* Identity cache is best-effort. */ } }
+    }
+    if (snapshot && identityHash) {
+      const captured = { ...snapshot, identityHash };
+      await saveUsage(captured);
+      segment = await computeSegment(captured);
+    }
   } catch { /* Preserve the existing user's statusline even if capture fails. */ }
+  const emit = (text: string): void => { process.stdout.write(withSegment(text, segment)); };
 
   const encoded = args.find((arg) => arg.startsWith('--original='))?.slice('--original='.length);
-  if (!encoded) return;
+  if (!encoded) { emit(''); return; }
   let command: string;
-  try { command = Buffer.from(encoded, 'base64').toString('utf8'); } catch { return; }
-  if (!command) return;
+  try { command = Buffer.from(encoded, 'base64').toString('utf8'); } catch { emit(''); return; }
+  if (!command) { emit(''); return; }
   const child = spawn('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'ignore'], detached: true });
   const terminateGroup = (): void => {
     try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
@@ -93,7 +138,7 @@ const runStatusLine = async (args: readonly string[]): Promise<void> => {
     child.once('error', finish);
     child.once('close', finish);
   });
-  process.stdout.write(Buffer.concat(outputChunks, outputBytes).toString('utf8'));
+  emit(Buffer.concat(outputChunks, outputBytes).toString('utf8'));
   if (outputState.truncated) process.stderr.write(`Surplus: chained Claude statusline output exceeded ${String(maxChainedStatusLineOutputBytes)} bytes and was truncated.\n`);
   if (receivedSignal) {
     const signalNumber = osSignalNumber(receivedSignal);
@@ -113,24 +158,34 @@ const getClaudeUsage = async (): Promise<{ readonly usage?: UsageSnapshot; reado
   };
 };
 
+/**
+ * Returns a routing decision with available usage, premium effort, and Claude identity metadata.
+ * Performs filesystem and provider-process IO; unavailable telemetry produces a default decision, while configuration, path-resolution, and uncaught provider errors reject.
+ */
 const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; premiumEffort?: string; identityHash?: string }> => {
   const config = await readConfig();
   const providerConfig = configured(config, provider);
   const previous = await readState(provider);
+  const history = await readUsageHistory(provider);
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
     const usage = claude.usage;
-    const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}) });
+    const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history });
     return { decision, ...(usage ? { usage } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
   const discovery = await discoverCodex();
   const usage = discovery?.usage;
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
-  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}) });
+  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history });
   return { decision, ...(usage ? { usage } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
+/**
+ * Launches the provider with automatic premium routing only for eligible interactive sessions without explicit overrides, retaining original arguments when preparation fails.
+ * Performs process and filesystem IO, attempts to persist routing metadata, and replaces the process on POSIX or sets its exit status after the child exits.
+ * Provider lookup and launch failures reject; local state write failures are ignored.
+ */
 const run = async (provider: Provider, args: string[]): Promise<void> => {
   if (!shouldAutomaticallyRoute(process.stdin.isTTY, process.stdout.isTTY)) {
     process.exitCode = await launchProvider(provider, args);
@@ -151,9 +206,7 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
     selected = appendModel(provider, result.decision.model, selected);
     selected = appendEffort(provider, result.decision.effort ?? result.premiumEffort, selected);
   }
-  const childEnv = provider === 'claude' && result.identityHash
-    ? { ...process.env, SURPLUS_CLAUDE_IDENTITY_HASH: result.identityHash }
-    : process.env;
+  const childEnv = routedChildEnvironment(provider, result.identityHash, result.decision.tier);
   const onStarted = async (): Promise<void> => {
     try { await saveState(provider, { tier: result.decision.tier, resetAt: result.usage?.resetsAt ?? '', observedAt: new Date().toISOString() }); } catch { /* Local routing state never controls provider launch or exit status. */ }
     if (provider === 'claude' && result.identityHash) {
@@ -171,9 +224,11 @@ const status = async (provider: Provider): Promise<void> => {
   showDecision(result.decision);
 };
 
+/**
+ * Persists provider preferences from --premium and --effort argument pairs while retaining existing feature settings.
+ * Performs filesystem IO and writes a confirmation; invalid arguments and configuration read, validation, or write failures reject.
+ */
 const configure = async (provider: Provider, args: string[]): Promise<void> => {
-  const config = await readConfig();
-  const current = configured(config, provider);
   const next: Record<string, string> = {};
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
@@ -182,14 +237,38 @@ const configure = async (provider: Provider, args: string[]): Promise<void> => {
     next[flag ?? ''] = value;
     index += 1;
   }
-  const updated: ProviderConfig = {
-    ...current,
-    ...(next['--premium'] ? { premiumModel: next['--premium'] } : {}),
-    ...(next['--effort'] ? { premiumEffort: next['--effort'] } : {}),
-  };
-  const providers = { ...config.providers, [provider]: updated };
-  await saveConfig({ version: 1, providers });
+  await updateConfig((latest) => {
+    const latestUpdated: ProviderConfig = {
+      ...configured(latest, provider),
+      ...(next['--premium'] ? { premiumModel: next['--premium'] } : {}),
+      ...(next['--effort'] ? { premiumEffort: next['--effort'] } : {}),
+    };
+    return { ...latest, providers: { ...latest.providers, [provider]: latestUpdated } };
+  });
   process.stdout.write(`Saved ${provider} preferences in the private Surplus config.\n`);
+};
+
+const featureFlags: Readonly<Record<string, keyof Features>> = {
+  '--session-notice': 'sessionNotice', '--prompt-nudge': 'promptNudge', '--statusline-segment': 'statuslineSegment',
+};
+
+/**
+ * Applies feature flag/on-or-off pairs to provider hooks and saved settings, attempting hook rollback if saving settings fails.
+ * Performs filesystem IO and writes a confirmation; invalid arguments, config failures, and hook synchronization failures reject.
+ * A settings-save failure remains the rejection even when its hook rollback also fails.
+ */
+const configureFeatures = async (args: string[]): Promise<void> => {
+  const next: Record<string, boolean> = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index] ?? '';
+    const value = args[index + 1];
+    const key = featureFlags[flag];
+    if (!key || (value !== 'on' && value !== 'off')) throw new Error('Use --session-notice, --prompt-nudge or --statusline-segment with on or off.');
+    next[key] = value === 'on';
+  }
+  const updated = await updateConfig((latest) => ({ ...latest, features: { ...latest.features, ...next } }));
+  await syncHooks(updated.features);
+  process.stdout.write(`Saved features: session notice ${updated.features.sessionNotice ? 'on' : 'off'}, prompt nudge ${updated.features.promptNudge ? 'on' : 'off'}, statusline segment ${updated.features.statuslineSegment ? 'on' : 'off'}.\n`);
 };
 
 const demo = (): void => {
@@ -203,14 +282,42 @@ const demo = (): void => {
   showDecision(decide({ usage: sample, config: defaultConfig.providers.claude, now }));
 };
 
+let forceExit = false;
+
+/**
+ * Dispatches CLI arguments, defaulting to process arguments, and resolves when the selected command completes unless a provider launch replaces the process.
+ * May perform filesystem, stream, and child-process IO and update process exit state; invalid commands set exit code 2, while hooks set it to 0.
+ * Uncaught command failures reject, including configuration and installation errors; uninstall failures are collected in an AggregateError.
+ */
 export const main = async (args = process.argv.slice(2)): Promise<void> => {
   const [command, first, ...rest] = args;
   if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usageText); return; }
   if (command === 'capture' && first === 'claude') { await runStatusLine(rest); return; }
+  if (command === 'hook') {
+    const event = rest[0];
+    const output = isProvider(first) && (event === 'session-start' || event === 'prompt-submit')
+      ? await runHook(first, event, readStatusLineInput) : '';
+    if (output) process.stdout.write(output);
+    process.exitCode = 0;
+    forceExit = true;
+    return;
+  }
   if (command === 'install') {
-    const captureInstalled = first !== '--no-claude-capture' && !rest.includes('--no-claude-capture')
-      ? await installClaudeStatusLine() : false;
+    const flags = [first, ...rest];
+    const captureInstalled = !flags.includes('--no-claude-capture') ? await installClaudeStatusLine() : false;
+    let hookSnapshots: Awaited<ReturnType<typeof syncHooks>> = [];
+    try {
+      if (!flags.includes('--no-hooks')) {
+        // A broken config must not block reinstall, which is how users repair things; fall back to default features.
+        const features = await readConfig().then((config) => config.features, () => defaultFeatures);
+        hookSnapshots = await syncHooks(features);
+      }
+    } catch (error) {
+      if (captureInstalled) await uninstallClaudeStatusLine();
+      throw error;
+    }
     try { await installShell(); } catch (error) {
+      try { await restoreHooks(hookSnapshots); } catch { /* Report the original install failure. */ }
       if (captureInstalled) await uninstallClaudeStatusLine();
       throw error;
     }
@@ -219,7 +326,7 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
   }
   if (command === 'uninstall') {
     const failures: unknown[] = [];
-    for (const operation of [uninstallClaudeStatusLine, uninstallShell]) {
+    for (const operation of [uninstallClaudeStatusLine, uninstallHooks, uninstallShell]) {
       try { await operation(); } catch (error) { failures.push(error); }
     }
     if (failures.length > 0) {
@@ -231,6 +338,7 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
   }
   if (command === 'demo') { demo(); return; }
   if (command === 'status' && isProvider(first)) { await status(first); return; }
+  if (command === 'configure' && first === 'features') { await configureFeatures(rest); return; }
   if (command === 'configure' && isProvider(first)) { await configure(first, rest); return; }
   if (command === 'run' && isProvider(first)) { await run(first, rest); return; }
   if (isProvider(command)) { await run(command, [first, ...rest].filter((value): value is string => value !== undefined)); return; }
@@ -239,8 +347,11 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
 };
 
 if (process.argv[1] && ['cli.js', 'surplus'].includes(basename(process.argv[1]))) {
-  void main().catch((error: unknown) => {
+  void main().then(() => {
+    // Hooks must never linger on a slow provider probe; exit once stdout is flushed.
+    if (forceExit) process.stdout.write('', () => { killCodexAppServers(); process.exit(0); });
+  }).catch((error: unknown) => {
     process.stderr.write(`surplus: ${error instanceof Error ? error.message : 'unknown error'}\n`);
-    process.exitCode = 1;
+    process.exitCode = forceExit ? 0 : 1;
   });
 }

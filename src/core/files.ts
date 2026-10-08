@@ -1,13 +1,15 @@
-import { chmod, lstat, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import type { Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSnapshot } from './types.js';
+import type { Features, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot } from './types.js';
 import { surplusDataDirectory, xdgDirectory } from './xdg.js';
 
 export const dataDir = (): string => surplusDataDirectory();
 export const configPath = (): string => join(xdgDirectory('config'), 'surplus', 'config.json');
 const usagePath = (provider: Provider): string => join(dataDir(), `${provider}-usage.json`);
 const statePath = (provider: Provider): string => join(dataDir(), `${provider}-state.json`);
+const historyPath = (provider: Provider): string => join(dataDir(), `${provider}-usage-history.json`);
+const hookSessionsPath = (): string => join(dataDir(), 'hook-sessions.json');
 const claudeIdentityPath = (): string => join(dataDir(), 'claude-identity.json');
 
 const readJson = async <T>(path: string): Promise<T | undefined> => {
@@ -30,6 +32,27 @@ export const atomicJson = async (path: string, value: unknown): Promise<void> =>
   await rename(temporary, destination);
 };
 
+const withFileLock = async <T>(path: string, operation: () => Promise<T>): Promise<T> => {
+  const lockPath = `${path}.lock`;
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const deadline = Date.now() + 100;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  while (!handle) {
+    try { handle = await open(lockPath, 'wx', 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      try { if (Date.now() - (await stat(lockPath)).mtimeMs > 10_000) await unlink(lockPath); } catch { /* A concurrent release may remove it. */ }
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for Surplus data lock.');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  try { return await operation(); }
+  finally { await handle.close(); await unlink(lockPath).catch(() => undefined); }
+};
+
+/**
+ * Purely checks required routing settings and optional pace settings against their accepted values and bounds.
+ */
 const isProviderConfig = (value: unknown): value is ProviderConfig => {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
@@ -41,17 +64,51 @@ const isProviderConfig = (value: unknown): value is ProviderConfig => {
     && typeof row.nearResetMinutes === 'number' && row.nearResetMinutes >= 0
     && typeof row.maxTelemetryAgeMinutes === 'number' && row.maxTelemetryAgeMinutes > 0
     && typeof row.hysteresisPercent === 'number' && row.hysteresisPercent >= 0 && row.hysteresisPercent <= row.minWeeklyRemainingPercent
-    && (row.premiumEffort === undefined || typeof row.premiumEffort === 'string');
+    && (row.premiumEffort === undefined || typeof row.premiumEffort === 'string')
+    && (row.strategy === undefined || row.strategy === 'pace' || row.strategy === 'near-reset')
+    && (row.premiumBurnMultiplier === undefined || (typeof row.premiumBurnMultiplier === 'number' && row.premiumBurnMultiplier > 0))
+    && (row.paceMarginPercent === undefined || (typeof row.paceMarginPercent === 'number' && row.paceMarginPercent >= 0 && row.paceMarginPercent <= 100))
+    && (row.minPaceElapsedMinutes === undefined || (typeof row.minPaceElapsedMinutes === 'number' && row.minPaceElapsedMinutes >= 0));
 };
 
-const isSurplusConfig = (value: unknown): value is SurplusConfig => {
+/**
+ * Purely accepts omitted features or an object whose values are all booleans, including unknown keys.
+ */
+const isFeatures = (value: unknown): boolean => {
+  if (value === undefined) return true;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  return Object.values(value).every((entry) => typeof entry === 'boolean');
+};
+
+/**
+ * Purely checks the version, both provider configurations, and optional features without applying defaults.
+ */
+const isSurplusConfig = (value: unknown): value is { readonly version: 1; readonly providers: Record<Provider, ProviderConfig>; readonly features?: Partial<Features> } => {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
   if (row.version !== 1 || typeof row.providers !== 'object' || row.providers === null) return false;
   const providers = row.providers as Record<string, unknown>;
-  return isProviderConfig(providers.claude) && isProviderConfig(providers.codex);
+  return isProviderConfig(providers.claude) && isProviderConfig(providers.codex) && isFeatures(row.features);
 };
 
+/**
+ * Purely returns a copy of saved settings with missing pace options filled from the provider defaults.
+ */
+const withPaceDefaults = (provider: Provider, saved: ProviderConfig): ProviderConfig => {
+  const defaults = defaultConfig.providers[provider];
+  return {
+    ...saved,
+    strategy: saved.strategy ?? defaults.strategy ?? 'pace',
+    premiumBurnMultiplier: saved.premiumBurnMultiplier ?? defaults.premiumBurnMultiplier ?? 1.5,
+    paceMarginPercent: saved.paceMarginPercent ?? defaults.paceMarginPercent ?? 10,
+    minPaceElapsedMinutes: saved.minPaceElapsedMinutes ?? defaults.minPaceElapsedMinutes ?? 1440,
+  };
+};
+
+/**
+ * Reads the local config and returns validated settings with pace and feature defaults, or all defaults when the file is missing.
+ * Performs filesystem IO and rejects on invalid home-directory configuration, other read failures, malformed JSON, or invalid settings.
+ */
 export const readConfig = async (): Promise<SurplusConfig> => {
   let source: string;
   try { source = await readFile(configPath(), 'utf8'); } catch (error) {
@@ -61,29 +118,127 @@ export const readConfig = async (): Promise<SurplusConfig> => {
   let saved: unknown;
   try { saved = JSON.parse(source) as unknown; } catch { throw new Error('Surplus config is malformed; automatic selection is disabled until it is fixed.'); }
   if (!isSurplusConfig(saved)) throw new Error('Surplus config is invalid; automatic selection is disabled until it is fixed.');
-  return saved;
+  return {
+    version: 1,
+    providers: { claude: withPaceDefaults('claude', saved.providers.claude), codex: withPaceDefaults('codex', saved.providers.codex) },
+    features: { ...defaultFeatures, ...saved.features },
+  };
 };
 
 export const saveConfig = (config: SurplusConfig): Promise<void> => atomicJson(configPath(), config);
-export const saveUsage = (usage: UsageSnapshot): Promise<void> => atomicJson(usagePath(usage.provider), usage);
+export const updateConfig = async (update: (latest: SurplusConfig) => SurplusConfig): Promise<SurplusConfig> => withFileLock(configPath(), async () => {
+  const updated = update(await readConfig());
+  await atomicJson(configPath(), updated);
+  return updated;
+});
+export const maxHistoryEntries = 300;
+export const historyThrottleMinutes = 10;
+
+const isUsageSample = (value: unknown): value is UsageSample => typeof value === 'object' && value !== null
+  && typeof (value as UsageSample).observedAt === 'string' && Number.isFinite(Date.parse((value as UsageSample).observedAt))
+  && typeof (value as UsageSample).used === 'number' && Number.isFinite((value as UsageSample).used)
+  && (value as UsageSample).used >= 0 && (value as UsageSample).used <= 100
+  && typeof (value as UsageSample).resetsAt === 'string'
+  && ((value as UsageSample).identityHash === undefined || typeof (value as UsageSample).identityHash === 'string');
+
+/**
+ * Reads saved history for the provider, retaining entries with valid observation dates, usage percentages, and string reset times; returns an empty array for unreadable, malformed, or non-array data.
+ * Performs filesystem IO; invalid home-directory configuration rejects before the read.
+ */
+export const readUsageHistory = async (provider: Provider): Promise<UsageSample[]> => {
+  const saved = await readJson<unknown>(historyPath(provider));
+  return Array.isArray(saved) ? saved.filter(isUsageSample) : [];
+};
+
+/**
+ * Writes history for the snapshot's reset window, appending when usage changes or at least ten minutes have elapsed and retaining the last 300 entries on append.
+ * An invalid observation timestamp leaves history unchanged.
+ * Performs filesystem IO and rejects on home-directory or write failures.
+ */
+const recordUsageHistory = async (usage: UsageSnapshot): Promise<void> => {
+  const observed = Date.parse(usage.observedAt);
+  if (!Number.isFinite(observed)) return;
+  const identityHash = usage.identityHash;
+  await withFileLock(historyPath(usage.provider), async () => {
+    const saved = await readUsageHistory(usage.provider);
+    const current = saved.filter((sample) => sample.resetsAt === usage.resetsAt && sample.identityHash === identityHash);
+    const last = current.at(-1);
+    const due = last?.used !== usage.weeklyUsedPercent || observed - Date.parse(last.observedAt) >= historyThrottleMinutes * 60_000;
+    const next = due ? [...current, { observedAt: usage.observedAt, used: usage.weeklyUsedPercent, resetsAt: usage.resetsAt, ...(identityHash ? { identityHash } : {}) }].slice(-maxHistoryEntries) : current;
+    if (!(due || next.length !== saved.length)) return;
+    await atomicJson(historyPath(usage.provider), next);
+  });
+};
+
+/**
+ * Writes the provider's latest snapshot and attempts to update its usage history.
+ * Performs filesystem IO; snapshot persistence failures reject, while history failures are ignored.
+ */
+export const saveUsage = async (usage: UsageSnapshot): Promise<void> => {
+  await atomicJson(usagePath(usage.provider), usage);
+  try { await recordUsageHistory(usage); } catch { /* History only sharpens pace estimates; it never blocks capture. */ }
+};
+
+export interface HookSessionRecord { readonly state: string; readonly checkedAt: string }
+const sessionRetentionMs = 7 * 24 * 60 * 60_000;
+
+/**
+ * Reads session notice records with string state and check-time fields, returning an empty object for unreadable, malformed, or non-object data.
+ * Performs filesystem IO; invalid home-directory configuration rejects before the read.
+ */
+export const readHookSessions = async (): Promise<Record<string, HookSessionRecord>> => {
+  const saved = await readJson<unknown>(hookSessionsPath());
+  if (typeof saved !== 'object' || saved === null || Array.isArray(saved)) return {};
+  const result: Record<string, HookSessionRecord> = {};
+  for (const [key, value] of Object.entries(saved)) {
+    if (typeof value === 'object' && value !== null && typeof (value as HookSessionRecord).state === 'string' && typeof (value as HookSessionRecord).checkedAt === 'string') {
+      result[key] = value as HookSessionRecord;
+    }
+  }
+  return result;
+};
+
+/**
+ * Persists the session's notice record, removing other records with invalid check times or check times more than seven days before now.
+ * Performs filesystem IO and rejects on home-directory or write failures.
+ */
+export const saveHookSession = async (sessionId: string, record: HookSessionRecord, now: Date): Promise<void> => {
+  await withFileLock(hookSessionsPath(), async () => {
+    const sessions = await readHookSessions();
+    const existing = sessions[sessionId];
+    const selected = existing && Date.parse(existing.checkedAt) > Date.parse(record.checkedAt) ? existing : record;
+    const kept = Object.entries(sessions).filter(([key, value]) => key !== sessionId && now.getTime() - Date.parse(value.checkedAt) <= sessionRetentionMs);
+    await atomicJson(hookSessionsPath(), Object.fromEntries([...kept, [sessionId, selected]]));
+  });
+};
 export const readUsage = (provider: Provider): Promise<UsageSnapshot | undefined> => readJson<UsageSnapshot>(usagePath(provider));
 export const readState = (provider: Provider): Promise<ProviderState | undefined> => readJson<ProviderState>(statePath(provider));
 export const saveState = (provider: Provider, state: ProviderState): Promise<void> => atomicJson(statePath(provider), state);
 export const readClaudeIdentity = async (): Promise<string | undefined> => (await readJson<{ identityHash?: string }>(claudeIdentityPath()))?.identityHash;
-export const saveClaudeIdentity = (identityHash: string | undefined): Promise<void> => atomicJson(claudeIdentityPath(), { identityHash });
+export const saveClaudeIdentity = (identityHash: string | undefined, now = new Date()): Promise<void> => atomicJson(claudeIdentityPath(), { identityHash, checkedAt: now.toISOString() });
+/** Returns the saved identity only when it was resolved within maxAgeMs, so callers can skip spawning `claude auth status`. */
+export const readFreshClaudeIdentity = async (maxAgeMs: number, now = new Date()): Promise<string | undefined> => {
+  const saved = await readJson<{ identityHash?: string; checkedAt?: string }>(claudeIdentityPath());
+  const checked = Date.parse(saved?.checkedAt ?? '');
+  return typeof saved?.identityHash === 'string' && Number.isFinite(checked) && now.getTime() - checked <= maxAgeMs ? saved.identityHash : undefined;
+};
+export const defaultFeatures: Features = { sessionNotice: true, promptNudge: false, statuslineSegment: false };
 export const defaultConfig: SurplusConfig = {
   version: 1,
+  features: defaultFeatures,
   providers: {
     claude: {
       premiumModel: 'opus', minWeeklyRemainingPercent: 25,
       reservePercent: 5, expectedUsageUntilResetPercent: 5, minSessionRemainingPercent: 25, nearResetMinutes: 2880,
       maxTelemetryAgeMinutes: 120, hysteresisPercent: 5,
+      strategy: 'pace', premiumBurnMultiplier: 1.5, paceMarginPercent: 10, minPaceElapsedMinutes: 1440,
     },
     codex: {
       premiumModel: 'auto', premiumEffort: 'high',
       minWeeklyRemainingPercent: 25, reservePercent: 5, expectedUsageUntilResetPercent: 5,
       minSessionRemainingPercent: 25,
       nearResetMinutes: 2880, maxTelemetryAgeMinutes: 5, hysteresisPercent: 5,
+      strategy: 'pace', premiumBurnMultiplier: 1.3, paceMarginPercent: 10, minPaceElapsedMinutes: 1440,
     },
   },
 };

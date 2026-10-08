@@ -1,3 +1,24 @@
+# [0.2.0-beta.3](https://github.com/oleg-koval/surplus/compare/v0.2.0-beta.2...v0.2.0-beta.3) (2026-10-08)
+
+
+### 🐛 Bug Fixes
+
+* address PR [#7](https://github.com/oleg-koval/surplus/issues/7) review comments ([#9](https://github.com/oleg-koval/surplus/issues/9)) ([586e627](https://github.com/oleg-koval/surplus/commit/586e627694ca061e1a38cb900e1c36827567007a))
+
+# [0.2.0-beta.2](https://github.com/oleg-koval/surplus/compare/v0.2.0-beta.1...v0.2.0-beta.2) (2026-10-08)
+
+
+### 🐛 Bug Fixes
+
+* reject invalid usage windows and malformed history samples ([763cff9](https://github.com/oleg-koval/surplus/commit/763cff90cbff1b8be4d197fb641b9332298fa15e))
+
+# [0.2.0-beta.1](https://github.com/oleg-koval/surplus/compare/v0.1.2...v0.2.0-beta.1) (2026-10-08)
+
+
+### ✨ Features
+
+* pace-based routing and in-TUI notices ([#7](https://github.com/oleg-koval/surplus/issues/7)) ([56356db](https://github.com/oleg-koval/surplus/commit/56356db6f72b6bc6a7bdd68f3a247ac0a3e0fef4))
+
 ## [0.1.2](https://github.com/oleg-koval/surplus/compare/v0.1.1...v0.1.2) (2026-10-07)
 
 

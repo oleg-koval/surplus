@@ -11,7 +11,7 @@ import { resolveHomeDirectory } from '../core/xdg.js';
 const begin = '# >>> surplus managed block >>>';
 const end = '# <<< surplus managed block <<<';
 const managedBin = (): string => join(dataDir(), 'bin');
-const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+export const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 const managedMarkers = (): string => `${begin}\nexport PATH=${shellQuote(managedBin())}:"$PATH"\n${end}\n`;
 const wrapper = managedWrapperContents;
 
@@ -108,7 +108,7 @@ const replaceManagedBlock = (source: string, replacement: string): string => {
   return `${beforeText}${separator}${afterText}`;
 };
 
-const writeAtomic = async (path: string, contents: string, requestedMode: number): Promise<void> => {
+export const writeAtomic = async (path: string, contents: string, requestedMode: number): Promise<void> => {
   let destination = path;
   let linkInfo: Awaited<ReturnType<typeof lstat>> | undefined;
   try {
