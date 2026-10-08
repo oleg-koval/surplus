@@ -94,7 +94,7 @@ export const decide = (input: {
   const strategy = config.strategy ?? 'pace';
   let reason: string;
   if (strategy === 'pace' && pace) {
-    const margin = paceSettings(config, usage.provider).margin - (activePremium ? config.hysteresisPercent : 0);
+    const margin = Math.max(0, paceSettings(config, usage.provider).margin - (activePremium ? config.hysteresisPercent : 0));
     if (pace.projectedUnusedPercent < config.reservePercent + margin) {
       return fallback(`On pace to leave only ~${percent(pace.projectedUnusedPercent)}% unused at reset; staying on default.`, remaining, minutesUntilReset, pace);
     }

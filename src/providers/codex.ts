@@ -11,6 +11,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const debug = (message: string): void => { if (process.env.SURPLUS_DEBUG === '1') process.stderr.write(`surplus debug: ${message}\n`); };
 
+const liveChildren = new Set<ReturnType<typeof spawn>>();
+
+/** SIGKILLs any app-server still running; used before a forced process exit so no child is orphaned. */
+export const killCodexAppServers = (): void => {
+  for (const child of liveChildren) { try { child.kill('SIGKILL'); } catch { /* Already gone. */ } }
+  liveChildren.clear();
+};
+
 class AppServer {
   private readonly child = spawn(process.env.SURPLUS_CODEX_BIN ?? 'codex', ['app-server', '--listen', 'stdio://'], { stdio: ['pipe', 'pipe', 'ignore'] });
   private readonly lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
@@ -21,6 +29,7 @@ class AppServer {
   private closed = false;
 
   constructor() {
+    liveChildren.add(this.child);
     this.lines.on('line', (line) => {
       let value: unknown;
       try { value = JSON.parse(line) as unknown; } catch { return; }
@@ -37,7 +46,7 @@ class AppServer {
     });
     this.child.on('error', (error) => { this.rejectPending(error); });
     this.child.stdin.on('error', (error) => { this.rejectPending(error); });
-    this.child.on('exit', () => { this.rejectPending(new Error('Codex app-server exited before replying.')); });
+    this.child.on('exit', () => { liveChildren.delete(this.child); this.rejectPending(new Error('Codex app-server exited before replying.')); });
     this.timeout = setTimeout(() => { this.close(); }, 8_000);
     this.timeout.unref();
   }

@@ -4,14 +4,14 @@ import { constants as osConstants } from 'node:os';
 import type { Features, Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { defaultConfig, readClaudeIdentity, readConfig, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
+import { defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveConfig, saveState, saveUsage } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
 import { runHook } from './hook.js';
 import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
 import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldAutomaticallyRoute } from './core/launch.js';
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from './install/shell.js';
 import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } from './providers/claude.js';
-import { discoverCodex } from './providers/codex.js';
+import { discoverCodex, killCodexAppServers } from './providers/codex.js';
 
 const usageText = `Surplus — use more of your included AI coding allowance before it resets.
 
@@ -271,7 +271,11 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
     const captureInstalled = !flags.includes('--no-claude-capture') ? await installClaudeStatusLine() : false;
     let hookSnapshots: Awaited<ReturnType<typeof syncHooks>> = [];
     try {
-      if (!flags.includes('--no-hooks')) hookSnapshots = await syncHooks((await readConfig()).features);
+      if (!flags.includes('--no-hooks')) {
+        // A broken config must not block reinstall, which is how users repair things; fall back to default features.
+        const features = await readConfig().then((config) => config.features, () => defaultFeatures);
+        hookSnapshots = await syncHooks(features);
+      }
     } catch (error) {
       if (captureInstalled) await uninstallClaudeStatusLine();
       throw error;
@@ -309,7 +313,7 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
 if (process.argv[1] && ['cli.js', 'surplus'].includes(basename(process.argv[1]))) {
   void main().then(() => {
     // Hooks must never linger on a slow provider probe; exit once stdout is flushed.
-    if (forceExit) process.stdout.write('', () => { process.exit(0); });
+    if (forceExit) process.stdout.write('', () => { killCodexAppServers(); process.exit(0); });
   }).catch((error: unknown) => {
     process.stderr.write(`surplus: ${error instanceof Error ? error.message : 'unknown error'}\n`);
     process.exitCode = forceExit ? 0 : 1;
