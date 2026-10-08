@@ -101,6 +101,7 @@ export const decide = (input: {
   const sessionRemaining = typeof sessionUsed === 'number' ? 100 - sessionUsed : 100;
   const minutesUntilReset = Math.floor((reset - now.getTime()) / 60_000);
   const activeForecast = forecast?.provider === usage.provider && forecast.resetAt === usage.resetsAt
+    && (usage.provider === 'codex' || (typeof usage.identityHash === 'string' && forecast.identityHash === usage.identityHash))
     && Number.isFinite(forecast.expectedUsagePercent) && forecast.expectedUsagePercent >= 0 && forecast.expectedUsagePercent <= 100
     ? forecast : undefined;
   const effectiveExpectedUsage = Math.max(config.expectedUsageUntilResetPercent, activeForecast?.expectedUsagePercent ?? 0);
@@ -116,8 +117,8 @@ export const decide = (input: {
   const pace = computePace({ usage, config, history, now, windowMinutes });
 
   if (remaining < requiredHeadroom) return fallback(`Weekly allowance cannot cover the ${activeForecast ? 'workload forecast and ' : ''}configured session budget and reserve.${forecastReason}`, remaining, minutesUntilReset, pace);
-  if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback('Session-window allowance is below the configured headroom.', remaining, minutesUntilReset, pace);
-  if (remaining < threshold) return fallback('Weekly allowance is below the premium threshold.', remaining, minutesUntilReset, pace);
+  if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback(`Session-window allowance is below the configured headroom.${forecastReason}`, remaining, minutesUntilReset, pace);
+  if (remaining < threshold) return fallback(`Weekly allowance is below the premium threshold.${forecastReason}`, remaining, minutesUntilReset, pace);
 
   const strategy = config.strategy ?? 'pace';
   let reason: string;

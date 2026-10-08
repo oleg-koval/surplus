@@ -159,7 +159,8 @@ const isWorkloadForecast = (value: unknown): value is WorkloadForecast => {
     && typeof row.expectedUsagePercent === 'number' && Number.isFinite(row.expectedUsagePercent)
     && row.expectedUsagePercent >= 0 && row.expectedUsagePercent <= 100
     && (row.source === 'explicit' || row.source === 'history')
-    && typeof row.setAt === 'string' && Number.isFinite(Date.parse(row.setAt));
+    && typeof row.setAt === 'string' && Number.isFinite(Date.parse(row.setAt))
+    && (row.provider === 'codex' ? (row.identityHash === undefined || typeof row.identityHash === 'string') : typeof row.identityHash === 'string');
 };
 
 /** Reads a valid local forecast, ignoring malformed state so routing can fail safe. */

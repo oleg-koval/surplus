@@ -57,6 +57,8 @@ export interface WorkloadForecast {
   readonly expectedUsagePercent: number;
   readonly source: 'explicit' | 'history';
   readonly setAt: string;
+  /** Claude forecasts are bound to the account identity that produced the usage window. */
+  readonly identityHash?: string;
 }
 
 export interface ProviderState {

@@ -4,7 +4,7 @@ import { constants as osConstants } from 'node:os';
 import type { Features, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { clearForecast, defaultConfig, defaultFeatures, readActiveForecast, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig } from './core/files.js';
+import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
 import { runHook } from './hook.js';
 import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
@@ -173,7 +173,7 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
     const usage = claude.usage;
-    const activeForecast = usage ? await readActiveForecast(provider, usage.resetsAt) : undefined;
+    const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
     const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
     return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
@@ -181,7 +181,7 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
   const discovery = await discoverCodex();
   const usage = discovery?.usage;
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
-  const activeForecast = usage ? await readActiveForecast(provider, usage.resetsAt) : undefined;
+  const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
   const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
   return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
@@ -226,9 +226,14 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
 
 const status = async (provider: Provider): Promise<void> => {
   const result = await prepare(provider);
+  if (provider === 'codex' && result.usage) {
+    try { await saveUsage(result.usage); } catch { /* Status telemetry cache is best-effort. */ }
+  }
   showDecision(result.decision);
   if (!result.forecast) return;
-  if (!result.usage) {
+  if (Date.parse(result.forecast.resetAt) <= Date.now()) {
+    process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
+  } else if (!result.usage) {
     process.stdout.write(`Workload forecast: ${String(result.forecast.expectedUsagePercent)}% expected usage for reset ${result.forecast.resetAt}; current telemetry unavailable.\n`);
   } else if (result.forecast.resetAt !== result.usage.resetsAt) {
     process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
@@ -244,7 +249,7 @@ const forecast = async (provider: Provider, args: string[]): Promise<void> => {
     const saved = await readForecast(provider);
     if (!saved) { process.stdout.write(`No workload forecast is saved for ${provider}.\n`); return; }
     const usage = await readUsage(provider);
-    if (usage && usage.resetsAt !== saved.resetAt) {
+    if (Date.parse(saved.resetAt) <= Date.now() || usage && usage.resetsAt !== saved.resetAt) {
       process.stdout.write(`Workload forecast: expired with the previous reset window (${saved.resetAt}); ignored.\n`);
       return;
     }
@@ -270,6 +275,7 @@ const forecast = async (provider: Provider, args: string[]): Promise<void> => {
     expectedUsagePercent,
     source: 'explicit',
     setAt: new Date().toISOString(),
+    ...(provider === 'claude' ? { identityHash: readClaudeIdentityHash() ?? usage.identityHash } : {}),
   };
   await saveForecast(next);
   process.stdout.write(`Saved a ${String(expectedUsagePercent)}% ${provider} workload forecast for reset ${usage.resetsAt}.\n`);

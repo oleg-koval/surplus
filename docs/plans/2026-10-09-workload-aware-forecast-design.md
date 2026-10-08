@@ -1,7 +1,7 @@
 # Workload-Aware Forecasting for Premium Routing
 
 **Issue:** [#10](https://github.com/oleg-koval/surplus/issues/10)
-**Status:** Design approved; implementation not started
+**Status:** Implemented in PR #11
 
 ## Problem statement
 
@@ -21,7 +21,7 @@ surplus forecast claude status
 surplus forecast claude clear
 ```
 
-The forecast is local, provider-specific, and bound to the exact `resetAt` value. It is a safety budget, not a promise that usage can be predicted precisely.
+The forecast is local, provider-specific, and bound to the exact `resetAt` value. Claude forecasts also carry the hashed account identity that produced the usage window, so an account switch cannot inherit another account's reservation. It is a safety budget, not a promise that usage can be predicted precisely.
 
 ### Policy semantics
 
@@ -49,8 +49,9 @@ A forecast can therefore make routing more conservative, but cannot weaken the c
    - exact `resetAt`;
    - expected usage percentage;
    - source (`explicit` in v1);
-   - set timestamp.
-6. Apply the record only when the provider and `resetAt` match current telemetry.
+   - set timestamp;
+   - Claude account identity hash (required for Claude; never a raw email or credential).
+6. Apply the record only when the provider, `resetAt`, and (for Claude) account identity match current telemetry.
 7. Ignore expired, malformed, mismatched, or invalid records and fall back to current behavior.
 8. `clear` is idempotent and removes only the selected provider's forecast.
 

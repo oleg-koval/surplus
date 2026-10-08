@@ -40,6 +40,7 @@ const forecast: WorkloadForecast = {
   expectedUsagePercent: 20,
   source: 'explicit',
   setAt: '2026-10-07T12:00:00.000Z',
+  identityHash: 'account-a',
 };
 
 describe('workload forecast persistence', () => {
@@ -72,7 +73,7 @@ describe('forecast CLI', () => {
     const usage: UsageSnapshot = {
       provider: 'claude', observedAt: '2030-10-07T12:00:00.000Z', weeklyUsedPercent: 40,
       resetsAt: '2030-10-15T12:00:00.000Z', sessionWindow: 'available', sessionUsedPercent: 10,
-      sessionResetsAt: '2030-10-07T17:00:00.000Z', usageAllowed: true,
+      sessionResetsAt: '2030-10-07T17:00:00.000Z', usageAllowed: true, identityHash: 'account-a',
     };
     await saveUsage(usage);
     const output: string[] = [];
@@ -94,5 +95,14 @@ describe('forecast CLI', () => {
   it('rejects an invalid percentage', async () => {
     await useTempHome();
     await expect(main(['forecast', 'claude', '101'])).rejects.toThrow('Forecast must be a number from 0 to 100');
+  });
+
+  it('reports a saved forecast as expired after its reset time', async () => {
+    await useTempHome();
+    await saveForecast({ ...forecast, resetAt: new Date(Date.now() - 1_000).toISOString() });
+    const output: string[] = [];
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => { output.push(String(chunk)); return true; });
+    try { await main(['forecast', 'claude', 'status']); } finally { write.mockRestore(); }
+    expect(output.join('')).toMatch(/expired with the previous reset window/);
   });
 });
