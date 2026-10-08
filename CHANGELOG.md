@@ -1,3 +1,10 @@
+# [0.2.0-beta.1](https://github.com/oleg-koval/surplus/compare/v0.1.2...v0.2.0-beta.1) (2026-10-08)
+
+
+### ✨ Features
+
+* pace-based routing and in-TUI notices ([#7](https://github.com/oleg-koval/surplus/issues/7)) ([56356db](https://github.com/oleg-koval/surplus/commit/56356db6f72b6bc6a7bdd68f3a247ac0a3e0fef4))
+
 ## [0.1.2](https://github.com/oleg-koval/surplus/compare/v0.1.1...v0.1.2) (2026-10-07)
 
 
