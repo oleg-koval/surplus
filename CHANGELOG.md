@@ -1,3 +1,10 @@
+# [0.3.0](https://github.com/oleg-koval/surplus/compare/v0.2.0...v0.3.0) (2026-10-09)
+
+
+### ✨ Features
+
+* add reset-scoped workload forecasts ([#11](https://github.com/oleg-koval/surplus/issues/11)) ([caf75b1](https://github.com/oleg-koval/surplus/commit/caf75b155bd55f75a2dba3b0012eee5bfed3958a)), closes [#10](https://github.com/oleg-koval/surplus/issues/10)
+
 # [0.2.0](https://github.com/oleg-koval/surplus/compare/v0.1.2...v0.2.0) (2026-10-08)
 
 
