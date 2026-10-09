@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import type { Provider } from '../core/types.js';
 import { findExecutable } from '../core/launch.js';
 import { resolveHomeDirectory } from '../core/xdg.js';
+import { integrationDebug } from './debug.js';
 
 const runFile = promisify(execFile);
 
@@ -31,16 +32,18 @@ export const isSimplePiLaunch = (args: readonly string[]): boolean => args.lengt
 /** Checks Pi's effective credential type without reading or printing credential material. */
 export const hasPiSubscriptionAuth = async (source: Provider, env = process.env): Promise<boolean> => {
   const executable = await findExecutable('pi', env);
-  if (!executable) return false;
+  if (!executable) { integrationDebug('pi', 'original executable unavailable.', env); return false; }
   const provider = source === 'claude' ? 'anthropic' : 'openai-codex';
   try {
     const { stdout } = await runFile(executable, ['auth', 'check', '--provider', provider, '--json', '--no-refresh'], {
       env, timeout: 5_000, maxBuffer: 16 * 1024,
     });
     const result: unknown = JSON.parse(stdout) as unknown;
-    return typeof result === 'object' && result !== null && !Array.isArray(result)
+    const oauth = typeof result === 'object' && result !== null && !Array.isArray(result)
       && (result as Record<string, unknown>).status === 'ready'
       && (result as Record<string, unknown>).provider === provider
       && (result as Record<string, unknown>).authType === 'oauth';
-  } catch { return false; }
+    if (!oauth) integrationDebug('pi', 'auth check did not confirm OAuth subscription authentication.', env);
+    return oauth;
+  } catch { integrationDebug('pi', 'auth check failed, timed out, or returned malformed JSON.', env); return false; }
 };

@@ -2,10 +2,11 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { main } from '../src/cli.js';
-import { readConfig } from '../src/core/files.js';
+import { integrationLaunchArgs, main } from '../src/cli.js';
+import { atomicJson, configPath, defaultConfig, integrationsPath, readConfig } from '../src/core/files.js';
 import * as files from '../src/core/files.js';
 import * as launch from '../src/core/launch.js';
+import { hasExplicitOverride } from '../src/core/launch.js';
 import * as claude from '../src/providers/claude.js';
 import * as codex from '../src/providers/codex.js';
 import * as hermes from '../src/integrations/hermes.js';
@@ -28,6 +29,13 @@ const hermesDocument = (provider: string, short = true): unknown => ({
 });
 
 describe('Hermes integration', () => {
+  it('keeps chat as the subcommand and preserves explicit Surplus overrides', () => {
+    expect(integrationLaunchArgs('hermes', ['chat'], 'gpt-5.5', 'high')).toEqual(['chat', '--model', 'gpt-5.5', '--reasoning', 'high']);
+    expect(integrationLaunchArgs('hermes', [], 'gpt-5.5', 'high')).toEqual(['--model', 'gpt-5.5', '--reasoning', 'high']);
+    expect(hasExplicitOverride('hermes', ['chat'], { SURPLUS_MODEL: 'chosen' })).toBe(true);
+    expect(hasExplicitOverride('hermes', [], { SURPLUS_EFFORT: 'low' })).toBe(true);
+  });
+
   it('accepts only complete Claude or Codex subscription windows', () => {
     expect(parseHermesUsage(hermesDocument('anthropic'))?.provider).toBe('claude');
     expect(parseHermesUsage(hermesDocument('openai-codex'))?.provider).toBe('codex');
@@ -51,9 +59,32 @@ describe('Hermes integration', () => {
     expect(isSimpleHermesLaunch(['chat', '--model', 'x'])).toBe(false);
     expect(isSimpleHermesLaunch(['usage'])).toBe(false);
   });
+
+  it('reports a failed usage probe only in debug mode', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'surplus-hermes-debug-'));
+    directories.push(home);
+    const executable = join(home, 'hermes');
+    await writeFile(executable, '#!/bin/sh\nprintf broken-json\n');
+    await chmod(executable, 0o755);
+    const lines: string[] = [];
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => { lines.push(String(chunk)); return true; });
+    try {
+      expect(await discoverHermes({ HOME: home, PATH: home, SURPLUS_HERMES_BIN: executable })).toBeUndefined();
+      expect(lines).toEqual([]);
+      expect(await discoverHermes({ HOME: home, PATH: home, SURPLUS_HERMES_BIN: executable, SURPLUS_DEBUG: '1' })).toBeUndefined();
+      expect(lines.join('')).toMatch(/usage probe failed/);
+    } finally { write.mockRestore(); }
+  });
 });
 
 describe('Pi integration', () => {
+  it('builds exact premium provider, model, and effort arguments', () => {
+    expect(integrationLaunchArgs('pi', [], 'claude-opus-4-6', 'high', 'claude')).toEqual(['--provider', 'anthropic', '--model', 'claude-opus-4-6', '--thinking', 'high']);
+    expect(integrationLaunchArgs('pi', [], 'gpt-5.5', 'xhigh', 'codex')).toEqual(['--provider', 'openai-codex', '--model', 'gpt-5.5', '--thinking', 'xhigh']);
+    expect(hasExplicitOverride('pi', [], { SURPLUS_MODEL: 'chosen' })).toBe(true);
+    expect(hasExplicitOverride('pi', [], { SURPLUS_EFFORT: 'low' })).toBe(true);
+  });
+
   it('requires Pi to report OAuth rather than API-key authentication', async () => {
     const home = await mkdtemp(join(tmpdir(), 'surplus-pi-auth-'));
     directories.push(home);
@@ -63,6 +94,22 @@ describe('Pi integration', () => {
     const env = { HOME: home, PATH: home, SURPLUS_PI_BIN: executable };
     expect(await hasPiSubscriptionAuth('claude', env)).toBe(true);
     expect(await hasPiSubscriptionAuth('codex', env)).toBe(false);
+  });
+
+  it('reports a failed auth probe only in debug mode', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'surplus-pi-debug-'));
+    directories.push(home);
+    const executable = join(home, 'pi');
+    await writeFile(executable, '#!/bin/sh\nprintf broken-json\n');
+    await chmod(executable, 0o755);
+    const lines: string[] = [];
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => { lines.push(String(chunk)); return true; });
+    try {
+      expect(await hasPiSubscriptionAuth('claude', { HOME: home, PATH: home, SURPLUS_PI_BIN: executable })).toBe(false);
+      expect(lines).toEqual([]);
+      expect(await hasPiSubscriptionAuth('claude', { HOME: home, PATH: home, SURPLUS_PI_BIN: executable, SURPLUS_DEBUG: '1' })).toBe(false);
+      expect(lines.join('')).toMatch(/auth check failed/);
+    } finally { write.mockRestore(); }
   });
 
   it('selects both supported subscriptions from Pi settings and skips project overrides', async () => {
@@ -92,13 +139,28 @@ describe('Pi integration', () => {
     process.env.XDG_CONFIG_HOME = join(home, 'config');
     const output = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
+      const providers = {
+        claude: { ...defaultConfig.providers.claude, premiumModel: 'saved-claude', reservePercent: 17 },
+        codex: { ...defaultConfig.providers.codex, premiumModel: 'saved-codex', premiumEffort: 'xhigh' },
+      };
+      await atomicJson(configPath(), { version: 1, providers, features: defaultConfig.features,
+        integrations: { hermes: { premiumModel: 'saved-hermes' }, pi: { sources: { claude: { premiumModel: 'old-claude' } } } } });
       await main(['configure', 'pi', '--source', 'claude', '--premium', 'claude-opus-4-6']);
       await main(['configure', 'pi', '--source', 'codex', '--premium', 'gpt-5.5', '--effort', 'high']);
+      await main(['configure', 'pi', '--source', 'codex', '--premium', 'gpt-5.6']);
       const config = await readConfig();
       expect(config.integrations.pi.sources).toEqual({
-        claude: { premiumModel: 'claude-opus-4-6' }, codex: { premiumModel: 'gpt-5.5', premiumEffort: 'high' },
+        claude: { premiumModel: 'claude-opus-4-6' }, codex: { premiumModel: 'gpt-5.6', premiumEffort: 'high' },
       });
-      expect(JSON.parse(await readFile(join(home, 'config', 'surplus', 'config.json'), 'utf8'))).toHaveProperty('providers.codex');
+      expect(config.integrations.hermes.premiumModel).toBe('saved-hermes');
+      expect(config.providers.claude.premiumModel).toBe('saved-claude');
+      expect(config.providers.claude.reservePercent).toBe(17);
+      expect(config.providers.codex.premiumModel).toBe('saved-codex');
+      expect(config.providers.codex.premiumEffort).toBe('xhigh');
+      expect(JSON.parse(await readFile(integrationsPath(), 'utf8'))).toHaveProperty('pi.sources.codex.premiumEffort', 'high');
+      await atomicJson(configPath(), { version: 1, providers, features: defaultConfig.features });
+      expect((await readConfig()).integrations.pi.sources?.codex?.premiumModel).toBe('gpt-5.6');
+      expect((await readConfig()).integrations.hermes.premiumModel).toBe('saved-hermes');
     } finally {
       output.mockRestore();
       if (prior.HOME === undefined) delete process.env.HOME; else process.env.HOME = prior.HOME;
@@ -129,7 +191,10 @@ describe('Pi integration', () => {
     try {
       await main(['configure', 'pi', '--source', 'codex', '--premium', 'gpt-test', '--effort', 'high']);
       await main(['status', 'pi']);
-      expect(output.join('')).toMatch(/PREMIUM · gpt-test/);
+      expect(output.join('')).toMatch(/PREMIUM · gpt-test · 40\.0% weekly remaining/);
+      process.env.SURPLUS_TEST_WEEKLY_USED = '90';
+      await main(['status', 'pi']);
+      expect(output.join('')).toMatch(/DEFAULT · provider default · 10\.0% weekly remaining/);
     } finally {
       write.mockRestore();
       for (const key of keys) {
@@ -140,7 +205,7 @@ describe('Pi integration', () => {
 });
 
 describe.each([
-  ['hermes', 'claude', ['chat'], ['--model', 'integration-premium', '--reasoning', 'high', 'chat']],
+  ['hermes', 'claude', ['chat'], ['chat', '--model', 'integration-premium', '--reasoning', 'high']],
   ['hermes', 'codex', [], ['--model', 'integration-premium', '--reasoning', 'high']],
   ['pi', 'claude', [], ['--provider', 'anthropic', '--model', 'integration-premium', '--thinking', 'high']],
   ['pi', 'codex', [], ['--provider', 'openai-codex', '--model', 'integration-premium', '--thinking', 'high']],

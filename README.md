@@ -84,7 +84,7 @@ surplus demo                          # deterministic sample, no account access
 surplus uninstall
 ```
 
-Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, a short usage history (current window only, at most 300 samples per provider), reset-scoped workload forecasts, per-session notice memory, account identity hashes, and policy state live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
+Provider configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`; Hermes and Pi targets live in `integrations.json` in the same directory so older Surplus versions cannot erase them. Local usage, a short usage history (current window only, at most 300 samples per provider), reset-scoped workload forecasts, per-session notice memory, account identity hashes, and policy state live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
 
 ## Important limits
 

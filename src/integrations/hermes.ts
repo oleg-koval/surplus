@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Provider, UsageSnapshot } from '../core/types.js';
 import { findExecutable } from '../core/launch.js';
+import { integrationDebug } from './debug.js';
 
 const runFile = promisify(execFile);
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -32,9 +33,11 @@ export const parseHermesUsage = (value: unknown): UsageSnapshot | undefined => {
 /** Queries Hermes's own active credential without starting an agent or reading its auth files. */
 export const discoverHermes = async (env = process.env): Promise<UsageSnapshot | undefined> => {
   const executable = await findExecutable('hermes', env);
-  if (!executable) return undefined;
+  if (!executable) { integrationDebug('hermes', 'original executable unavailable.', env); return undefined; }
   try {
     const { stdout } = await runFile(executable, ['usage', '--json'], { env, timeout: 8_000, maxBuffer: 64 * 1024 });
-    return parseHermesUsage(JSON.parse(stdout) as unknown);
-  } catch { return undefined; }
+    const usage = parseHermesUsage(JSON.parse(stdout) as unknown);
+    if (!usage) integrationDebug('hermes', 'usage output lacks supported subscription windows.', env);
+    return usage;
+  } catch { integrationDebug('hermes', 'usage probe failed, timed out, or returned malformed JSON.', env); return undefined; }
 };

@@ -6,6 +6,7 @@ import { surplusDataDirectory, xdgDirectory } from './xdg.js';
 
 export const dataDir = (): string => surplusDataDirectory();
 export const configPath = (): string => join(xdgDirectory('config'), 'surplus', 'config.json');
+export const integrationsPath = (): string => join(xdgDirectory('config'), 'surplus', 'integrations.json');
 const usagePath = (provider: Provider): string => join(dataDir(), `${provider}-usage.json`);
 const statePath = (provider: Provider): string => join(dataDir(), `${provider}-state.json`);
 const historyPath = (provider: Provider): string => join(dataDir(), `${provider}-usage-history.json`);
@@ -131,19 +132,31 @@ const withPaceDefaults = (provider: Provider, saved: ProviderConfig): ProviderCo
  * Reads the local config and returns validated settings with pace and feature defaults, or all defaults when the file is missing.
  * Performs filesystem IO and rejects on invalid home-directory configuration, other read failures, malformed JSON, or invalid settings.
  */
-export const readConfig = async (): Promise<SurplusConfig> => {
+const readIntegrations = async (fallback: Partial<Record<Integration, IntegrationConfig>> = {}): Promise<SurplusConfig['integrations']> => {
   let source: string;
-  try { source = await readFile(configPath(), 'utf8'); } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaultConfig;
+  try { source = await readFile(integrationsPath(), 'utf8'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ...defaultConfig.integrations, ...fallback };
     throw error;
   }
+  let saved: unknown;
+  try { saved = JSON.parse(source) as unknown; } catch { throw new Error('Surplus integration config is malformed; automatic selection is disabled until it is fixed.'); }
+  if (!isIntegrations(saved)) throw new Error('Surplus integration config is invalid; automatic selection is disabled until it is fixed.');
+  return { ...defaultConfig.integrations, ...saved };
+};
+
+export const readConfig = async (): Promise<SurplusConfig> => {
+  let source: string | undefined;
+  try { source = await readFile(configPath(), 'utf8'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (source === undefined) return { ...defaultConfig, integrations: await readIntegrations() };
   let saved: unknown;
   try { saved = JSON.parse(source) as unknown; } catch { throw new Error('Surplus config is malformed; automatic selection is disabled until it is fixed.'); }
   if (!isSurplusConfig(saved)) throw new Error('Surplus config is invalid; automatic selection is disabled until it is fixed.');
   return {
     version: 1,
     providers: { claude: withPaceDefaults('claude', saved.providers.claude), codex: withPaceDefaults('codex', saved.providers.codex) },
-    integrations: { ...defaultConfig.integrations, ...saved.integrations },
+    integrations: await readIntegrations(saved.integrations),
     features: { ...defaultFeatures, ...saved.features },
   };
 };
@@ -151,9 +164,15 @@ export const readConfig = async (): Promise<SurplusConfig> => {
 export const saveConfig = (config: SurplusConfig): Promise<void> => atomicJson(configPath(), config);
 export const updateConfig = async (update: (latest: SurplusConfig) => SurplusConfig): Promise<SurplusConfig> => withFileLock(configPath(), async () => {
   const updated = update(await readConfig());
-  await atomicJson(configPath(), updated);
+  await saveConfig(updated);
   return updated;
 });
+export const updateIntegrations = async (update: (latest: SurplusConfig['integrations']) => SurplusConfig['integrations']): Promise<void> => {
+  await withFileLock(integrationsPath(), async () => {
+    const current = await readConfig();
+    await atomicJson(integrationsPath(), update(current.integrations));
+  });
+};
 export const maxHistoryEntries = 300;
 export const historyThrottleMinutes = 10;
 

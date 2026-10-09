@@ -42,8 +42,9 @@ const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
   return undefined;
 };
 
-export const hasExplicitOverride = (provider: Provider, args: readonly string[], env = process.env): boolean => {
+export const hasExplicitOverride = (provider: Client, args: readonly string[], env = process.env): boolean => {
   if (env.SURPLUS_MODEL || env.SURPLUS_EFFORT) return true;
+  if (provider === 'hermes' || provider === 'pi') return false;
   if ((provider === 'claude' && env.ANTHROPIC_MODEL) || (provider === 'codex' && env.CODEX_MODEL)) return true;
   if (provider === 'claude' && (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_BASE_URL || env.CLAUDE_CODE_USE_BEDROCK || env.CLAUDE_CODE_USE_VERTEX || env.CLAUDE_CODE_USE_FOUNDRY || env.CLAUDE_CODE_EFFORT_LEVEL)) return true;
   const sentinel = args.indexOf('--');

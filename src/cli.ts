@@ -4,7 +4,7 @@ import { constants as osConstants } from 'node:os';
 import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig } from './core/files.js';
+import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig, updateIntegrations } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
 import { runHook } from './hook.js';
 import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
@@ -14,6 +14,7 @@ import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } fr
 import { discoverCodex, killCodexAppServers } from './providers/codex.js';
 import { discoverHermes, isSimpleHermesLaunch } from './integrations/hermes.js';
 import { hasPiSubscriptionAuth, isSimplePiLaunch, readPiSource } from './integrations/pi.js';
+import { integrationDebug } from './integrations/debug.js';
 
 const usageText = `Surplus — use more of your included AI coding allowance before it resets.
 
@@ -251,6 +252,15 @@ const integrationFallback = (reason: string): Decision => ({
   tier: 'default', model: 'provider default', reason, weeklyRemainingPercent: null, minutesUntilReset: null,
 });
 
+export const integrationLaunchArgs = (integration: Integration, args: readonly string[], model: string, effort?: string, source?: Provider): string[] => {
+  if (integration === 'pi') {
+    if (!source) throw new Error('Pi subscription source is unavailable.');
+    return ['--provider', source === 'claude' ? 'anthropic' : 'openai-codex', '--model', model, ...(effort ? ['--thinking', effort] : []), ...args];
+  }
+  const options = ['--model', model, ...(effort ? ['--reasoning', effort] : [])];
+  return args[0] === 'chat' ? ['chat', ...options] : [...options, ...args];
+};
+
 /** Uses the client's own quota view for Hermes and an explicitly shared subscription for Pi. */
 const prepareIntegration = async (integration: Integration): Promise<{ readonly decision: Decision; readonly source?: Provider; readonly effort?: string }> => {
   const config = await readConfig();
@@ -289,16 +299,18 @@ const prepareIntegration = async (integration: Integration): Promise<{ readonly 
 
 const runIntegration = async (integration: Integration, args: string[]): Promise<void> => {
   const simple = integration === 'hermes' ? isSimpleHermesLaunch(args) : isSimplePiLaunch(args);
-  if (!simple || !shouldAutomaticallyRoute(process.stdin.isTTY, process.stdout.isTTY)) {
+  if (!simple || !shouldAutomaticallyRoute(process.stdin.isTTY, process.stdout.isTTY) || hasExplicitOverride(integration, args)) {
     process.exitCode = await launchProvider(integration, args);
     return;
   }
   let prepared: Awaited<ReturnType<typeof prepareIntegration>>;
   try { prepared = await prepareIntegration(integration); } catch {
+    integrationDebug(integration, 'routing preparation failed; launching unchanged.');
     process.exitCode = await launchProvider(integration, args);
     return;
   }
   if (prepared.decision.tier !== 'premium') {
+    integrationDebug(integration, prepared.decision.reason);
     process.exitCode = await launchProvider(integration, args);
     return;
   }
@@ -308,9 +320,7 @@ const runIntegration = async (integration: Integration, args: string[]): Promise
   }
   showDecision(prepared.decision);
   const { source, effort } = prepared;
-  const selected = integration === 'pi'
-    ? ['--provider', source === 'claude' ? 'anthropic' : 'openai-codex', '--model', prepared.decision.model, ...(effort ? ['--thinking', effort] : []), ...args]
-    : ['--model', prepared.decision.model, ...(effort ? ['--reasoning', effort] : []), ...args];
+  const selected = integrationLaunchArgs(integration, args, prepared.decision.model, effort, source);
   process.exitCode = await launchProvider(integration, selected, routedChildEnvironment(integration, undefined, 'premium'));
 };
 
@@ -328,12 +338,15 @@ const configureIntegration = async (integration: Integration, args: string[]): P
     || (integration === 'pi' && values['--source'] !== 'claude' && values['--source'] !== 'codex')) {
     throw new Error(integration === 'pi' ? 'Pi needs --source claude|codex and --premium MODEL.' : 'Hermes needs --premium MODEL.');
   }
-  await updateConfig((latest) => {
-    const current = latest.integrations[integration];
+  await updateIntegrations((latest) => {
+    const current = latest[integration];
     const updated = integration === 'pi'
-      ? { ...current, sources: { ...current.sources, [values['--source'] as Provider]: { premiumModel: model, ...(effort ? { premiumEffort: effort } : {}) } } }
+      ? { ...current, sources: { ...current.sources, [values['--source'] as Provider]: {
+        ...current.sources?.[values['--source'] as Provider], premiumModel: model,
+        ...(effort ? { premiumEffort: effort } : {}),
+      } } }
       : { ...current, premiumModel: model, ...(effort ? { premiumEffort: effort } : {}) };
-    return { ...latest, integrations: { ...latest.integrations, [integration]: updated } };
+    return { ...latest, [integration]: updated };
   });
   process.stdout.write(`Saved ${integration} preferences in the private Surplus config.\n`);
 };
