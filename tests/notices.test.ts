@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeSegment, main } from '../src/cli.js';
 import { dataDir, defaultConfig, defaultFeatures, readHookSessions, readUsageHistory, saveConfig, saveForecast, saveHookSession, saveUsage } from '../src/core/files.js';
@@ -110,6 +110,25 @@ describe('usage history', () => {
       setEnv('SURPLUS_TEST_WEEKLY_USED', '30');
       const discovery = await discoverCodex();
       expect(discovery?.usage?.windowMinutes).toBe(10080);
+    });
+  });
+
+  it('discovers Codex directly when managed wrappers lead PATH', async () => {
+    await withHome(async (home) => {
+      const managedBin = join(home, 'state/surplus/bin');
+      const providerBin = join(home, 'provider-bin');
+      await Promise.all([mkdir(managedBin, { recursive: true }), mkdir(providerBin)]);
+      const wrapper = join(managedBin, 'codex');
+      await writeFile(wrapper, '#!/bin/sh\nexec surplus run codex "$@"\n');
+      await chmod(wrapper, 0o755);
+      await symlink(join(process.cwd(), 'tests/fixtures/fake-codex.mjs'), join(providerBin, 'codex'));
+      setEnv('SURPLUS_CODEX_BIN', undefined);
+      setEnv('SURPLUS_TEST_WEEKLY_USED', '30');
+      setEnv('PATH', [managedBin, providerBin, dirname(process.execPath)].join(delimiter));
+      const discovery = await discoverCodex();
+      expect(discovery?.usage?.weeklyUsedPercent).toBe(30);
+      expect(discovery?.effectiveModel).toBe('gpt-test');
+      expect(discovery?.supportedEfforts).toContain('high');
     });
   });
 });
