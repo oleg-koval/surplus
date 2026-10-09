@@ -30,6 +30,9 @@ try {
   const tarball = join(packDir, `surplus-cli-${version}.tgz`);
   run('npm', ['install', '--prefix', prefix, '--no-save', tarball], { cwd: root });
   const surplus = join(prefix, 'node_modules', '.bin', 'surplus');
+  for (const flag of ['--version', '-v']) {
+    assert.equal(run(surplus, [flag]), `${version}\n`, 'installed CLI must report its package version');
+  }
   const env = {
     ...process.env,
     HOME: home,

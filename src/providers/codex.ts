@@ -141,7 +141,7 @@ export const selectEffectiveCodexModel = (configuredModel: unknown, models: read
 
 /**
  * Probes Codex for included usage and model capabilities, stamping usage with now; returns undefined for missing executables, non-ChatGPT accounts, or caught lookup or discovery failures, and may return metadata without usage.
- * Resolves `SURPLUS_CODEX_BIN` or searches `PATH` while excluding managed wrappers, then starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
+ * Resolves `SURPLUS_CODEX_BIN` or searches `PATH` (Node's default POSIX path when unset) while excluding managed wrappers, then starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
  * Synchronous server setup or cleanup failures reject rather than becoming an undefined result.
  */
 export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | undefined> => {

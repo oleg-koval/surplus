@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { constants as osConstants } from 'node:os';
 import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
@@ -19,6 +20,7 @@ import { integrationDebug } from './integrations/debug.js';
 const usageText = `Surplus — use more of your included AI coding allowance before it resets.
 
 Usage:
+  surplus --version, -v
   surplus install [--no-claude-capture] [--no-hooks]
   surplus uninstall
   surplus status [claude|codex|hermes|pi]
@@ -457,6 +459,11 @@ let forceExit = false;
  */
 export const main = async (args = process.argv.slice(2)): Promise<void> => {
   const [command, first, ...rest] = args;
+  if (command === '--version' || command === '-v') {
+    const metadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    process.stdout.write(`${metadata.version}\n`);
+    return;
+  }
   if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usageText); return; }
   if (command === 'capture' && first === 'claude') { await runStatusLine(rest); return; }
   if (command === 'hook') {

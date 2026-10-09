@@ -1,14 +1,12 @@
 # Surplus
 
-**Saved allowance. Stronger settings.**
-
 Surplus watches the included usage windows exposed by Claude Code and Codex CLI. When your usage pace says part of the weekly allowance would otherwise go unused, it can start a new interactive session with a model or reasoning level you choose. It also supports Hermes Agent and Pi when configured for a Claude or Codex subscription.
 
 ## Install
 
 Requires POSIX Node.js 22.21+ or 24.10+, plus at least one supported CLI. POSIX wrappers use stable `process.execve` for provider launches, preserving the provider PID, terminal signals, and job control. Automatic model selection remains limited to fully interactive terminals. Windows integration is unsupported; shell installation supports zsh and bash.
 
-Codex usage and model discovery were verified with Codex CLI 0.160.1 and its app-server protocol. Older Codex clients that do not expose the required protocol fields safely keep their normal settings.
+Codex usage and model discovery were verified with Codex CLI 0.160.1 and 0.162.0 and their app-server protocol. Older Codex clients that do not expose the required protocol fields keep their normal settings.
 
 ```sh
 npm install --global surplus-cli
@@ -31,7 +29,7 @@ Surplus honors Claude Code's `CLAUDE_CONFIG_DIR` when reading or updating `setti
 
 For zsh, install uses the effective `$ZDOTDIR/.zshrc` (including a value assigned in `.zshenv`). Uninstall checks the current ZDOTDIR and HOME startup files; if you change ZDOTDIR after installing, set it to the original directory when uninstalling.
 
-The first Claude session after install only seeds its local reading after Claude returns rate-limit data. Surplus needs that reading before it can make an automatic choice. Codex usage is read live from Codex's local app-server.
+The first Claude session after install only seeds its local reading after Claude returns rate-limit data. Surplus needs that reading before it can make an automatic choice. Codex usage is read live from Codex's local app-server. Surplus resolves the original Codex executable before probing, skipping its own wrappers. When `PATH` is unset on POSIX, it searches `/usr/bin:/bin`, matching Node's default executable lookup.
 
 To install command wrappers without changing Claude's statusline, use `surplus install --no-claude-capture`. Claude automatic selection then remains unavailable until a captured sample exists. To skip the Claude Code and Codex hooks, use `surplus install --no-hooks`.
 
@@ -67,6 +65,7 @@ Codex may ask you to review/trust the new hook on first start. Codex 0.160 label
 ## Commands
 
 ```sh
+surplus --version                    # installed package version; -v also works
 surplus status claude                 # latest captured sample and policy decision
 surplus status codex                  # fresh read-only Codex usage and decision
 surplus forecast claude 20            # reserve 20% expected usage until this reset
