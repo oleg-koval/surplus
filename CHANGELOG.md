@@ -1,3 +1,10 @@
+## [0.4.1](https://github.com/oleg-koval/surplus/compare/v0.4.0...v0.4.1) (2026-10-09)
+
+
+### 📚 Documentation
+
+* add Surplus agent skill and guidance ([#13](https://github.com/oleg-koval/surplus/issues/13)) ([6a6cf3f](https://github.com/oleg-koval/surplus/commit/6a6cf3fdfa0f159aa59290230a48f3a295766d89))
+
 # [0.4.0](https://github.com/oleg-koval/surplus/compare/v0.3.0...v0.4.0) (2026-10-09)
 
 
