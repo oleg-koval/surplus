@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { runAutoUpdate, scheduleAutoUpdate } from './core/auto-update.js';
 import { constants as osConstants } from 'node:os';
 import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
 import { decide } from './core/policy.js';
@@ -19,6 +21,7 @@ import { integrationDebug } from './integrations/debug.js';
 const usageText = `Surplus — use more of your included AI coding allowance before it resets.
 
 Usage:
+  surplus --version, -v
   surplus install [--no-claude-capture] [--no-hooks]
   surplus uninstall
   surplus status [claude|codex|hermes|pi]
@@ -457,6 +460,11 @@ let forceExit = false;
  */
 export const main = async (args = process.argv.slice(2)): Promise<void> => {
   const [command, first, ...rest] = args;
+  if (command === '--version' || command === '-v') {
+    const metadata = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    process.stdout.write(`${metadata.version}\n`);
+    return;
+  }
   if (!command || command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usageText); return; }
   if (command === 'capture' && first === 'claude') { await runStatusLine(rest); return; }
   if (command === 'hook') {
@@ -518,7 +526,11 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
 };
 
 if (process.argv[1] && ['cli.js', 'surplus'].includes(basename(process.argv[1]))) {
-  void main().then(() => {
+  const cliPath = process.argv[1];
+  const invocation = process.argv[2] === '--internal-auto-update'
+    ? runAutoUpdate(cliPath)
+    : scheduleAutoUpdate(cliPath).then(() => main());
+  void invocation.then(() => {
     // Hooks must never linger on a slow provider probe; exit once stdout is flushed.
     if (forceExit) process.stdout.write('', () => { killCodexAppServers(); process.exit(0); });
   }).catch((error: unknown) => {

@@ -102,7 +102,9 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
     return explicit;
   }
   const canonicalWrapperDir = await canonicalPath(wrapperDir);
-  for (const directory of env.PATH === undefined ? [] : env.PATH.split(delimiter)) {
+  // Match Node's POSIX spawn lookup when PATH is absent, without searching cwd.
+  const searchPath = env.PATH ?? (process.platform === 'win32' ? undefined : '/usr/bin:/bin');
+  for (const directory of searchPath === undefined ? [] : searchPath.split(delimiter)) {
     const pathDirectory = directory || '.';
     if (await canonicalPath(pathDirectory) === canonicalWrapperDir) continue;
     const path = resolve(pathDirectory, name);

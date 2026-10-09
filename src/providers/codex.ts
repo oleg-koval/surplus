@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { UsageSnapshot } from '../core/types.js';
+import { findExecutable } from '../core/launch.js';
 
 interface RpcMessage { readonly id?: number | string; readonly result?: unknown; readonly error?: unknown }
 interface Window { readonly usedPercent?: unknown; readonly resetsAt?: unknown; readonly windowDurationMins?: unknown }
@@ -23,8 +24,8 @@ export const killCodexAppServers = (): void => {
 };
 
 class AppServer {
-  private readonly child = spawn(process.env.SURPLUS_CODEX_BIN ?? 'codex', ['app-server', '--listen', 'stdio://'], { stdio: ['pipe', 'pipe', 'ignore'] });
-  private readonly lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+  private readonly child;
+  private readonly lines;
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private readonly pendingMethods = new Map<number, string>();
@@ -32,10 +33,12 @@ class AppServer {
   private closed = false;
 
   /**
-   * Starts and tracks a Codex app-server process for metadata requests, with an eight-second close timer.
+   * Starts and tracks a Codex app-server process from the supplied executable for metadata requests, with an eight-second close timer.
    * Performs child-process IO; process and stdin errors reject pending requests, while synchronous setup failures propagate.
    */
-  constructor() {
+  constructor(executable: string) {
+    this.child = spawn(executable, ['app-server', '--listen', 'stdio://'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    this.lines = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     liveChildren.add(this.child);
     this.lines.on('line', (line) => {
       let value: unknown;
@@ -137,12 +140,20 @@ export const selectEffectiveCodexModel = (configuredModel: unknown, models: read
 };
 
 /**
- * Probes Codex for included usage and model capabilities, stamping usage with now; returns undefined for non-ChatGPT accounts or caught discovery failures, and may return metadata without usage.
- * Starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
+ * Probes Codex for included usage and model capabilities, stamping usage with now; returns undefined for missing executables, non-ChatGPT accounts, or caught lookup or discovery failures, and may return metadata without usage.
+ * Resolves `SURPLUS_CODEX_BIN` or searches `PATH` (Node's default POSIX path when unset) while excluding managed wrappers, then starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
  * Synchronous server setup or cleanup failures reject rather than becoming an undefined result.
  */
 export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | undefined> => {
-  const server = new AppServer();
+  let executable: string | undefined;
+  try {
+    executable = await findExecutable('codex', process.env);
+  } catch (error) {
+    debug(error instanceof Error ? error.message : 'Codex executable lookup failed.');
+    return undefined;
+  }
+  if (!executable) { debug('Could not find the original Codex executable.'); return undefined; }
+  const server = new AppServer(executable);
   try {
     await server.initialize();
     const account = await server.readAccount();

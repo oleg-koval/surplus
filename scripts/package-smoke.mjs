@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
 const root = new URL('..', import.meta.url).pathname;
+process.env.SURPLUS_AUTO_UPDATE = '0';
 const fixture = await mkdtemp(join(tmpdir(), 'surplus-package-smoke-'));
 const run = (command, args, options = {}) => {
   const result = spawnSync(command, args, { encoding: 'utf8', ...options });
@@ -30,6 +31,9 @@ try {
   const tarball = join(packDir, `surplus-cli-${version}.tgz`);
   run('npm', ['install', '--prefix', prefix, '--no-save', tarball], { cwd: root });
   const surplus = join(prefix, 'node_modules', '.bin', 'surplus');
+  for (const flag of ['--version', '-v']) {
+    assert.equal(run(surplus, [flag]), `${version}\n`, 'installed CLI must report its package version');
+  }
   const env = {
     ...process.env,
     HOME: home,
@@ -41,6 +45,32 @@ try {
     npm_config_cache: join(fixture, 'npm-cache'),
     SHELL: '/bin/zsh',
   };
+  const globalPrefix = join(fixture, 'global-prefix');
+  const updateBin = join(fixture, 'update-bin');
+  const updateLog = join(fixture, 'update-log');
+  const updateState = join(fixture, 'update-state');
+  await mkdir(updateBin);
+  await writeFile(join(updateBin, 'npm'), `#!/bin/sh\nprintf '%s\\n' "$1" >> "$SURPLUS_UPDATE_LOG"\nif [ "$1" = "view" ]; then printf '%s\\n' '"${version}"'; else exit 1; fi\n`);
+  await chmod(join(updateBin, 'npm'), 0o755);
+  run('npm', ['install', '--global', '--prefix', globalPrefix, '--ignore-scripts', '--no-audit', '--no-fund', tarball], { cwd: root });
+  const globalSurplus = join(globalPrefix, 'bin/surplus');
+  const updateEnv = { ...env, SURPLUS_AUTO_UPDATE: '1', XDG_STATE_HOME: updateState,
+    SURPLUS_UPDATE_LOG: updateLog, PATH: `${updateBin}:${process.env.PATH}` };
+  for (const flag of ['--version', '-v', '--version']) {
+    const result = spawnSync(globalSurplus, [flag], { encoding: 'utf8', env: updateEnv });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, `${version}\n`);
+    assert.equal(result.stderr, '', 'background update checks must not print notices');
+  }
+  const deadline = Date.now() + 5_000;
+  let updateResult;
+  while (Date.now() < deadline) {
+    try { updateResult = JSON.parse(await readFile(join(updateState, 'surplus/auto-update.json'), 'utf8')); } catch { /* Worker may not have written state yet. */ }
+    if (updateResult?.outcome === 'current') break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.equal(updateResult?.outcome, 'current', 'the packaged CLI must complete its background check');
+  assert.equal(await readFile(updateLog, 'utf8'), 'view\n', 'repeated launches must make only one registry request');
   run(surplus, ['install'], { env });
 
   const identity = { email: 'fixture@example.test', orgId: 'fixture-org', subscriptionType: 'pro' };

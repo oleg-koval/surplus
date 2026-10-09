@@ -34,7 +34,7 @@ export const atomicJson = async (path: string, value: unknown): Promise<void> =>
   await rename(temporary, destination);
 };
 
-const withFileLock = async <T>(path: string, operation: () => Promise<T>): Promise<T> => {
+export const withFileLock = async <T>(path: string, operation: () => Promise<T>): Promise<T> => {
   const lockPath = `${path}.lock`;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const deadline = Date.now() + 100;

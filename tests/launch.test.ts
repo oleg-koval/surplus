@@ -5,6 +5,23 @@ import { join } from 'node:path';
 import { appendEffort, appendModel, findExecutable, hasExplicitOverride, shouldAutomaticallyRoute } from '../src/core/launch.js';
 
 describe('provider executable lookup', () => {
+  it.skipIf(process.platform === 'win32')('uses Node\'s default POSIX executable search when PATH is unset', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-default-path-'));
+    const originalCwd = process.cwd();
+    try {
+      const localExecutable = join(fixture, 'sh');
+      await writeFile(localExecutable, '#!/bin/sh\nexit 99\n');
+      await chmod(localExecutable, 0o755);
+      process.chdir(fixture);
+      const executable = await findExecutable('sh', { HOME: fixture }, fixture);
+      expect(executable).toMatch(/^\/(usr\/)?bin\/sh$/);
+      expect(await findExecutable('sh', { HOME: fixture, PATH: '' }, fixture)).toBe(join(await realpath(fixture), 'sh'));
+    } finally {
+      process.chdir(originalCwd);
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('skips the managed wrapper path without HOME and finds the real provider', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'surplus-launch-'));
     try {
