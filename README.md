@@ -29,6 +29,10 @@ Surplus honors Claude Code's `CLAUDE_CONFIG_DIR` when reading or updating `setti
 
 For zsh, install uses the effective `$ZDOTDIR/.zshrc` (including a value assigned in `.zshenv`). Uninstall checks the current ZDOTDIR and HOME startup files; if you change ZDOTDIR after installing, set it to the original directory when uninstalling.
 
+Each CLI invocation, wrapper launch, and hook checks whether an automatic update is due. For npm global installations, Surplus checks npm's `latest` release in the background at most once every six hours and installs a newer stable version into the same Node prefix. Concurrent invocations share one cooldown. Source checkouts stay unchanged, and newer installed versions are never downgraded.
+
+Update checks and installs print nothing and do not wait for network requests before running your command. A failed attempt also starts the six-hour cooldown. Surplus records `lastCheckedAt`, the last successful `lastUpdatedAt`, and the outcome in `auto-update.json` in its state directory. Set `SURPLUS_AUTO_UPDATE=0` to disable automatic updates. Surplus uses npm's configured registry, disables install scripts, and leaves provider configuration and hooks in place.
+
 The first Claude session after install only seeds its local reading after Claude returns rate-limit data. Surplus needs that reading before it can make an automatic choice. Codex usage is read live from Codex's local app-server. Surplus resolves the original Codex executable before probing, skipping its own wrappers. When `PATH` is unset on POSIX, it searches `/usr/bin:/bin`, matching Node's default executable lookup.
 
 To install command wrappers without changing Claude's statusline, use `surplus install --no-claude-capture`. Claude automatic selection then remains unavailable until a captured sample exists. To skip the Claude Code and Codex hooks, use `surplus install --no-hooks`.

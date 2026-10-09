@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { runAutoUpdate, scheduleAutoUpdate } from './core/auto-update.js';
 import { constants as osConstants } from 'node:os';
 import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
 import { decide } from './core/policy.js';
@@ -525,7 +526,11 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
 };
 
 if (process.argv[1] && ['cli.js', 'surplus'].includes(basename(process.argv[1]))) {
-  void main().then(() => {
+  const cliPath = process.argv[1];
+  const invocation = process.argv[2] === '--internal-auto-update'
+    ? runAutoUpdate(cliPath)
+    : scheduleAutoUpdate(cliPath).then(() => main());
+  void invocation.then(() => {
     // Hooks must never linger on a slow provider probe; exit once stdout is flushed.
     if (forceExit) process.stdout.write('', () => { killCodexAppServers(); process.exit(0); });
   }).catch((error: unknown) => {
