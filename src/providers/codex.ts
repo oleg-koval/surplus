@@ -33,7 +33,7 @@ class AppServer {
   private closed = false;
 
   /**
-   * Starts and tracks a Codex app-server process for metadata requests, with an eight-second close timer.
+   * Starts and tracks a Codex app-server process from the supplied executable for metadata requests, with an eight-second close timer.
    * Performs child-process IO; process and stdin errors reject pending requests, while synchronous setup failures propagate.
    */
   constructor(executable: string) {
@@ -140,8 +140,8 @@ export const selectEffectiveCodexModel = (configuredModel: unknown, models: read
 };
 
 /**
- * Probes Codex for included usage and model capabilities, stamping usage with now; returns undefined for non-ChatGPT accounts or caught discovery failures, and may return metadata without usage.
- * Starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
+ * Probes Codex for included usage and model capabilities, stamping usage with now; returns undefined for missing executables, non-ChatGPT accounts, or caught lookup or discovery failures, and may return metadata without usage.
+ * Resolves `SURPLUS_CODEX_BIN` or searches `PATH` while excluding managed wrappers, then starts and closes an app-server child and performs IO; model-catalog failures retain any usage and catalog entries already obtained.
  * Synchronous server setup or cleanup failures reject rather than becoming an undefined result.
  */
 export const discoverCodex = async (now = new Date()): Promise<CodexDiscovery | undefined> => {
