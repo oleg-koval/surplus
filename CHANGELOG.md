@@ -1,3 +1,10 @@
+## [0.4.2](https://github.com/oleg-koval/surplus/compare/v0.4.1...v0.4.2) (2026-10-09)
+
+
+### 🐛 Bug Fixes
+
+* Codex discovery, version flags, and silent automatic updates ([#14](https://github.com/oleg-koval/surplus/issues/14)) ([bbb4a73](https://github.com/oleg-koval/surplus/commit/bbb4a738b97d4547672a7ab0ec34748dae80de35))
+
 ## [0.4.1](https://github.com/oleg-koval/surplus/compare/v0.4.0...v0.4.1) (2026-10-09)
 
 
