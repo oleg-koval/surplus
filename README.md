@@ -38,6 +38,7 @@ To install command wrappers without changing Claude's statusline, use `surplus i
 ## What it does
 
 At each new interactive launch, Surplus checks the provider's weekly window and actual reset time, telemetry age, included-usage availability, and your configured reserves. Claude and Codex sessions use the five-hour window when the provider reports it. Codex can use weekly-only data only when its app-server reports exactly one weekly window and explicitly confirms included usage is allowed. By default the policy is pace-based. It takes your average burn rate this week (and your last 24 hours, when Surplus has at least two hours of samples) and projects how much allowance would be left unused at the reset if premium usage burns faster (1.5x for Claude, 1.3x for Codex; these are assumptions you can change). It goes premium when the projection leaves at least the 5% reserve plus a 10% margin unused. The existing guards still apply: at least 25% weekly allowance left, the reserve plus expected usage budget covered, and, where a five-hour window is present, at least 25% remaining there. A 5% hysteresis band avoids flipping decisions between consecutive launches. In the first 24 hours of a window there is too little data, so Surplus uses the older rule: premium only during the final 48 hours of the weekly window. You can keep that older rule everywhere by setting `"strategy": "near-reset"` for a provider in the config file. Other pace knobs in the provider config are `premiumBurnMultiplier`, `paceMarginPercent` and `minPaceElapsedMinutes`.
+You can reserve more allowance for a heavier remainder of the current week with a reset-scoped forecast. For example, `surplus forecast claude 20` tells Surplus to budget 20% expected usage before the current reset. Surplus takes the safer maximum of that forecast and the configured `expectedUsageUntilResetPercent` baseline, so a forecast cannot weaken the normal guard. Forecasts are local, provider-specific, Claude-account-bound, and automatically ignored after the reset window or account changes; Surplus does not inspect prompts, repositories, or task text.
 
 Claude's default premium target is `opus`; outside a premium window, Surplus passes the original command through unchanged, including your normal model choice. Codex keeps the model selected by the user's effective Codex config and raises reasoning effort to `high` only when Codex's live model catalog confirms that effort for that exact model. Set a specific Codex premium model once with `surplus configure codex --premium MODEL` if you want model selection as well.
 
@@ -66,6 +67,9 @@ Codex may ask you to review/trust the new hook on first start. Codex 0.160 label
 ```sh
 surplus status claude                 # latest captured sample and policy decision
 surplus status codex                  # fresh read-only Codex usage and decision
+surplus forecast claude 20            # reserve 20% expected usage until this reset
+surplus forecast claude status        # inspect the saved forecast
+surplus forecast claude clear         # remove the reset-scoped forecast
 surplus configure claude --premium opus
 surplus configure codex --premium MODEL --effort high
 surplus configure features --session-notice on|off --prompt-nudge on|off --statusline-segment on|off
@@ -73,7 +77,7 @@ surplus demo                          # deterministic sample, no account access
 surplus uninstall
 ```
 
-Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, a short usage history (current window only, at most 300 samples per provider), per-session notice memory, account identity hashes, and policy state live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
+Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, a short usage history (current window only, at most 300 samples per provider), reset-scoped workload forecasts, per-session notice memory, account identity hashes, and policy state live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
 
 ## Important limits
 

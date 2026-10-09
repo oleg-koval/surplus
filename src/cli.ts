@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { basename } from 'node:path';
 import { constants as osConstants } from 'node:os';
-import type { Features, Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
+import type { Features, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveState, saveUsage, updateConfig } from './core/files.js';
+import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
 import { runHook } from './hook.js';
 import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
@@ -19,6 +19,7 @@ Usage:
   surplus install [--no-claude-capture] [--no-hooks]
   surplus uninstall
   surplus status [claude|codex]
+  surplus forecast <claude|codex> <0-100|status|clear>
   surplus run <claude|codex> [provider arguments...]
   surplus configure <claude|codex> [--premium MODEL] [--effort LEVEL]
   surplus configure features [--session-notice on|off] [--prompt-nudge on|off] [--statusline-segment on|off]
@@ -57,7 +58,8 @@ export const computeSegment = async (snapshot: UsageSnapshot): Promise<string> =
     if (!config.features.statuslineSegment) return '';
     const previous = await readState('claude');
     const history = await readUsageHistory('claude');
-    const decision = decide({ usage: snapshot, config: config.providers.claude, ...(previous ? { previous } : {}), history });
+    const forecast = await readForecast('claude');
+    const decision = decide({ usage: snapshot, config: config.providers.claude, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) });
     return statuslineSegment(decision, config.providers.claude);
   } catch { return ''; }
 };
@@ -162,23 +164,26 @@ const getClaudeUsage = async (): Promise<{ readonly usage?: UsageSnapshot; reado
  * Returns a routing decision with available usage, premium effort, and Claude identity metadata.
  * Performs filesystem and provider-process IO; unavailable telemetry produces a default decision, while configuration, path-resolution, and uncaught provider errors reject.
  */
-const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; premiumEffort?: string; identityHash?: string }> => {
+const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string }> => {
   const config = await readConfig();
   const providerConfig = configured(config, provider);
   const previous = await readState(provider);
   const history = await readUsageHistory(provider);
+  const forecast = await readForecast(provider);
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
     const usage = claude.usage;
-    const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history });
-    return { decision, ...(usage ? { usage } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
+    const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
+    const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
+    return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
   const discovery = await discoverCodex();
   const usage = discovery?.usage;
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
-  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history });
-  return { decision, ...(usage ? { usage } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
+  const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
+  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
+  return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
 /**
@@ -221,7 +226,59 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
 
 const status = async (provider: Provider): Promise<void> => {
   const result = await prepare(provider);
+  if (provider === 'codex' && result.usage) {
+    try { await saveUsage(result.usage); } catch { /* Status telemetry cache is best-effort. */ }
+  }
   showDecision(result.decision);
+  if (!result.forecast) return;
+  if (Date.parse(result.forecast.resetAt) <= Date.now()) {
+    process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
+  } else if (!result.usage) {
+    process.stdout.write(`Workload forecast: ${String(result.forecast.expectedUsagePercent)}% expected usage for reset ${result.forecast.resetAt}; current telemetry unavailable.\n`);
+  } else if (result.forecast.resetAt !== result.usage.resetsAt) {
+    process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
+  } else {
+    process.stdout.write(`Workload forecast: ${String(result.forecast.expectedUsagePercent)}% expected usage before reset (source: ${result.forecast.source}).\n`);
+  }
+};
+
+const forecast = async (provider: Provider, args: string[]): Promise<void> => {
+  if (args.length !== 1) throw new Error('Use surplus forecast <claude|codex> <0-100|status|clear>.');
+  const action = args[0] ?? '';
+  if (action === 'status') {
+    const saved = await readForecast(provider);
+    if (!saved) { process.stdout.write(`No workload forecast is saved for ${provider}.\n`); return; }
+    const usage = await readUsage(provider);
+    if (Date.parse(saved.resetAt) <= Date.now() || usage && usage.resetsAt !== saved.resetAt) {
+      process.stdout.write(`Workload forecast: expired with the previous reset window (${saved.resetAt}); ignored.\n`);
+      return;
+    }
+    process.stdout.write(`Workload forecast: ${String(saved.expectedUsagePercent)}% expected usage for ${provider} before reset ${saved.resetAt}.\n`);
+    return;
+  }
+  if (action === 'clear') {
+    await clearForecast(provider);
+    process.stdout.write(`Cleared the ${provider} workload forecast.\n`);
+    return;
+  }
+  const expectedUsagePercent = Number(action);
+  if (action.trim() === '' || !Number.isFinite(expectedUsagePercent) || expectedUsagePercent < 0 || expectedUsagePercent > 100) {
+    throw new Error('Forecast must be a number from 0 to 100, or status or clear.');
+  }
+  const usage = await readUsage(provider);
+  if (!usage || !Number.isFinite(Date.parse(usage.resetsAt)) || Date.parse(usage.resetsAt) <= Date.now()) {
+    throw new Error(`No current reset window is available. Run surplus status ${provider} first.`);
+  }
+  const next: WorkloadForecast = {
+    provider,
+    resetAt: usage.resetsAt,
+    expectedUsagePercent,
+    source: 'explicit',
+    setAt: new Date().toISOString(),
+    ...(provider === 'claude' ? { identityHash: readClaudeIdentityHash() ?? usage.identityHash } : {}),
+  };
+  await saveForecast(next);
+  process.stdout.write(`Saved a ${String(expectedUsagePercent)}% ${provider} workload forecast for reset ${usage.resetsAt}.\n`);
 };
 
 /**
@@ -337,6 +394,7 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
     return;
   }
   if (command === 'demo') { demo(); return; }
+  if (command === 'forecast' && isProvider(first)) { await forecast(first, rest); return; }
   if (command === 'status' && isProvider(first)) { await status(first); return; }
   if (command === 'configure' && first === 'features') { await configureFeatures(rest); return; }
   if (command === 'configure' && isProvider(first)) { await configure(first, rest); return; }

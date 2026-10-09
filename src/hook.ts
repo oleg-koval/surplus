@@ -2,7 +2,7 @@ import type { Decision, Provider, ProviderConfig, UsageSnapshot } from './core/t
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
 import { noticeState, promptSubmitMessage, sessionStartMessage } from './core/notice.js';
-import { readClaudeIdentity, readConfig, readHookSessions, readState, readUsage, readUsageHistory, saveHookSession, saveUsage } from './core/files.js';
+import { readActiveForecast, readClaudeIdentity, readConfig, readHookSessions, readState, readUsage, readUsageHistory, saveHookSession, saveUsage } from './core/files.js';
 import { discoverCodex } from './providers/codex.js';
 import type { CodexDiscovery } from './providers/codex.js';
 
@@ -26,7 +26,8 @@ const decideFor = async (provider: Provider, config: ProviderConfig, discovery: 
   const previous = await readState(provider);
   const history = await readUsageHistory(provider);
   const effective = provider === 'codex' ? codexUpgradeConfig(config, discovery) : config;
-  return { decision: decide({ ...(usage ? { usage } : {}), config: effective, ...(previous ? { previous } : {}), history, now }), config: effective };
+  const forecast = usage ? await readActiveForecast(provider, usage.resetsAt) : undefined;
+  return { decision: decide({ ...(usage ? { usage } : {}), config: effective, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}), now }), config: effective };
 };
 
 /**

@@ -1,4 +1,4 @@
-import type { Decision, Pace, ProviderConfig, ProviderState, UsageSample, UsageSnapshot } from './types.js';
+import type { Decision, Pace, ProviderConfig, ProviderState, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
 
 const defaultWindowMinutes = 10_080;
 const recentWindowMs = 24 * 60 * 60_000;
@@ -67,9 +67,10 @@ export const decide = (input: {
   readonly config: ProviderConfig;
   readonly previous?: ProviderState;
   readonly history?: readonly UsageSample[];
+  readonly forecast?: WorkloadForecast;
   readonly now?: Date;
 }): Decision => {
-  const { usage, config, previous, history = [], now = new Date() } = input;
+  const { usage, config, previous, history = [], forecast, now = new Date() } = input;
   const fallback = (reason: string, weeklyRemainingPercent: number | null = null, minutesUntilReset: number | null = null, pace?: Pace): Decision => ({
     tier: 'default', model: 'provider default', reason, weeklyRemainingPercent, minutesUntilReset, ...(pace ? { pace } : {}),
   });
@@ -99,7 +100,15 @@ export const decide = (input: {
   const remaining = 100 - usage.weeklyUsedPercent;
   const sessionRemaining = typeof sessionUsed === 'number' ? 100 - sessionUsed : 100;
   const minutesUntilReset = Math.floor((reset - now.getTime()) / 60_000);
-  const requiredHeadroom = config.reservePercent + config.expectedUsageUntilResetPercent;
+  const activeForecast = forecast?.provider === usage.provider && forecast.resetAt === usage.resetsAt
+    && (usage.provider === 'codex' || (typeof usage.identityHash === 'string' && forecast.identityHash === usage.identityHash))
+    && Number.isFinite(forecast.expectedUsagePercent) && forecast.expectedUsagePercent >= 0 && forecast.expectedUsagePercent <= 100
+    ? forecast : undefined;
+  const effectiveExpectedUsage = Math.max(config.expectedUsageUntilResetPercent, activeForecast?.expectedUsagePercent ?? 0);
+  const forecastReason = activeForecast
+    ? ` Workload forecast: ${percent(activeForecast.expectedUsagePercent)}% expected usage; effective expected usage: ${percent(effectiveExpectedUsage)}%; reserve: ${percent(config.reservePercent)}%.`
+    : '';
+  const requiredHeadroom = config.reservePercent + effectiveExpectedUsage;
   const sameWindow = previous?.resetAt === usage.resetsAt;
   const activePremium = sameWindow && previous.tier === 'premium';
   const threshold = activePremium
@@ -107,21 +116,21 @@ export const decide = (input: {
     : config.minWeeklyRemainingPercent;
   const pace = computePace({ usage, config, history, now, windowMinutes });
 
-  if (remaining < requiredHeadroom) return fallback('Weekly allowance cannot cover the configured session budget and reserve.', remaining, minutesUntilReset, pace);
-  if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback('Session-window allowance is below the configured headroom.', remaining, minutesUntilReset, pace);
-  if (remaining < threshold) return fallback('Weekly allowance is below the premium threshold.', remaining, minutesUntilReset, pace);
+  if (remaining < requiredHeadroom) return fallback(`Weekly allowance cannot cover the ${activeForecast ? 'workload forecast and ' : ''}configured session budget and reserve.${forecastReason}`, remaining, minutesUntilReset, pace);
+  if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback(`Session-window allowance is below the configured headroom.${forecastReason}`, remaining, minutesUntilReset, pace);
+  if (remaining < threshold) return fallback(`Weekly allowance is below the premium threshold.${forecastReason}`, remaining, minutesUntilReset, pace);
 
   const strategy = config.strategy ?? 'pace';
   let reason: string;
   if (strategy === 'pace' && pace) {
     const margin = Math.max(0, paceSettings(config, usage.provider).margin - (activePremium ? config.hysteresisPercent : 0));
     if (pace.projectedUnusedPercent < config.reservePercent + margin) {
-      return fallback(`On pace to leave only ~${percent(pace.projectedUnusedPercent)}% unused at reset; staying on default.`, remaining, minutesUntilReset, pace);
+      return fallback(`On pace to leave only ~${percent(pace.projectedUnusedPercent)}% unused at reset; staying on default.${forecastReason}`, remaining, minutesUntilReset, pace);
     }
-    reason = `On pace to leave ~${percent(pace.projectedUnusedPercent)}% unused at reset; premium fits.`;
+    reason = `On pace to leave ~${percent(pace.projectedUnusedPercent)}% unused at reset; premium fits.${forecastReason}`;
   } else {
-    if (minutesUntilReset > config.nearResetMinutes) return fallback('The weekly reset is not close enough to use the premium window.', remaining, minutesUntilReset, pace);
-    reason = activePremium ? 'Premium mode remains within its hysteresis band.' : 'Fresh weekly headroom is available near the reset.';
+    if (minutesUntilReset > config.nearResetMinutes) return fallback(`The weekly reset is not close enough to use the premium window.${forecastReason}`, remaining, minutesUntilReset, pace);
+    reason = `${activePremium ? 'Premium mode remains within its hysteresis band.' : 'Fresh weekly headroom is available near the reset.'}${forecastReason}`;
   }
 
   const decision: Decision = {

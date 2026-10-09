@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeSegment, main } from '../src/cli.js';
-import { dataDir, defaultConfig, defaultFeatures, readHookSessions, readUsageHistory, saveConfig, saveHookSession, saveUsage } from '../src/core/files.js';
+import { dataDir, defaultConfig, defaultFeatures, readHookSessions, readUsageHistory, saveConfig, saveForecast, saveHookSession, saveUsage } from '../src/core/files.js';
 import { hookMessage, runHook } from '../src/hook.js';
 import { statuslineSegment, withSegment } from '../src/core/notice.js';
 import type { UsageSnapshot } from '../src/core/types.js';
@@ -134,6 +134,14 @@ describe('hook output', () => {
       expect(active).toMatch(/\(active\)$/);
       setEnv('SURPLUS_ROUTED_TIER', 'premium');
       expect(await hookMessage('claude', 'session-start', { session_id: 's' }, { now })).toMatch(/\(active\)$/);
+    });
+  });
+
+  it('uses the active workload forecast in hook advice', async () => {
+    await withHome(async () => {
+      await saveUsage(premiumUsage);
+      await saveForecast({ provider: 'claude', resetAt: premiumUsage.resetsAt, expectedUsagePercent: 80, source: 'explicit', setAt: now.toISOString(), identityHash: 'id-1' });
+      expect(await hookMessage('claude', 'session-start', { session_id: 's' }, { now })).toBeUndefined();
     });
   });
 
