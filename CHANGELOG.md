@@ -1,3 +1,10 @@
+# [0.4.0](https://github.com/oleg-koval/surplus/compare/v0.3.0...v0.4.0) (2026-10-09)
+
+
+### ✨ Features
+
+* add Hermes and Pi subscription routing ([#12](https://github.com/oleg-koval/surplus/issues/12)) ([b657953](https://github.com/oleg-koval/surplus/commit/b6579532e54e0e070eb6c6be81463a54e81abda3))
+
 # [0.3.0](https://github.com/oleg-koval/surplus/compare/v0.2.0...v0.3.0) (2026-10-09)
 
 
