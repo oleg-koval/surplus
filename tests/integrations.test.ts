@@ -1,9 +1,16 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main } from '../src/cli.js';
 import { readConfig } from '../src/core/files.js';
+import * as files from '../src/core/files.js';
+import * as launch from '../src/core/launch.js';
+import * as claude from '../src/providers/claude.js';
+import * as codex from '../src/providers/codex.js';
+import * as hermes from '../src/integrations/hermes.js';
+import * as pi from '../src/integrations/pi.js';
+import type { SurplusConfig, UsageSnapshot } from '../src/core/types.js';
 import { discoverHermes, isSimpleHermesLaunch, parseHermesUsage } from '../src/integrations/hermes.js';
 import { hasPiSubscriptionAuth, isSimplePiLaunch, readPiSource } from '../src/integrations/pi.js';
 
@@ -129,5 +136,95 @@ describe('Pi integration', () => {
         if (prior[key] === undefined) delete process.env[key]; else process.env[key] = prior[key];
       }
     }
+  });
+});
+
+describe.each([
+  ['hermes', 'claude', ['chat'], ['--model', 'integration-premium', '--reasoning', 'high', 'chat']],
+  ['hermes', 'codex', [], ['--model', 'integration-premium', '--reasoning', 'high']],
+  ['pi', 'claude', [], ['--provider', 'anthropic', '--model', 'integration-premium', '--thinking', 'high']],
+  ['pi', 'codex', [], ['--provider', 'openai-codex', '--model', 'integration-premium', '--thinking', 'high']],
+] as const)('%s routing with %s quota', (integration, source, args, premiumArgs) => {
+  let usage: UsageSnapshot;
+  let config: SurplusConfig;
+  let previousExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    previousExitCode = process.exitCode;
+    const now = Date.now();
+    usage = {
+      provider: source, observedAt: new Date(now).toISOString(), weeklyUsedPercent: 40,
+      resetsAt: new Date(now + 24 * 60 * 60_000).toISOString(), usageAllowed: true,
+      sessionWindow: 'available', sessionUsedPercent: 20,
+      sessionResetsAt: new Date(now + 60 * 60_000).toISOString(), identityHash: 'test-account',
+    };
+    const target = { premiumModel: 'integration-premium', premiumEffort: 'high' };
+    config = {
+      ...files.defaultConfig,
+      integrations: { hermes: target, pi: { sources: { [source]: target } } },
+    };
+    vi.spyOn(files, 'readConfig').mockImplementation(async () => config);
+    vi.spyOn(files, 'readState').mockResolvedValue(undefined);
+    vi.spyOn(files, 'readUsageHistory').mockResolvedValue([]);
+    vi.spyOn(files, 'readForecast').mockResolvedValue(undefined);
+    vi.spyOn(files, 'readClaudeIdentity').mockResolvedValue('test-account');
+    vi.spyOn(files, 'readUsage').mockImplementation(async () => usage);
+    vi.spyOn(claude, 'readClaudeIdentityHash').mockReturnValue('test-account');
+    vi.spyOn(hermes, 'discoverHermes').mockImplementation(async () => usage);
+    vi.spyOn(pi, 'readPiSource').mockResolvedValue(source);
+    vi.spyOn(pi, 'hasPiSubscriptionAuth').mockResolvedValue(true);
+    vi.spyOn(codex, 'discoverCodex').mockImplementation(async () => ({ usage, models: [], supportedEfforts: [] }));
+    vi.spyOn(launch, 'shouldAutomaticallyRoute').mockReturnValue(true);
+    vi.spyOn(launch, 'launchProvider').mockResolvedValue(0);
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = previousExitCode;
+  });
+
+  const expectPremiumLaunch = (): void => {
+    expect(launch.launchProvider).toHaveBeenCalledExactlyOnceWith(
+      integration, premiumArgs, expect.objectContaining({ SURPLUS_ROUTED_TIER: 'premium' }),
+    );
+  };
+
+  it('launches the exact premium provider, model, and effort arguments', async () => {
+    await main(['run', integration, ...args]);
+    expectPremiumLaunch();
+    expect(files.readState).toHaveBeenCalledExactlyOnceWith(source);
+    expect(files.readUsageHistory).toHaveBeenCalledExactlyOnceWith(source);
+    expect(files.readForecast).toHaveBeenCalledExactlyOnceWith(source);
+  });
+
+  it.each([true, false])('applies previous premium hysteresis only in the same reset window (%s)', async (sameWindow) => {
+    config = { ...config, providers: { ...config.providers, [source]: { ...config.providers[source], strategy: 'near-reset' } } };
+    usage = { ...usage, weeklyUsedPercent: 78 };
+    vi.mocked(files.readState).mockImplementation(async (provider) => provider === source ? {
+      tier: 'premium', resetAt: sameWindow ? usage.resetsAt : usage.observedAt, observedAt: usage.observedAt,
+    } : undefined);
+    await main(['run', integration, ...args]);
+    if (sameWindow) expectPremiumLaunch();
+    else expect(launch.launchProvider).toHaveBeenCalledExactlyOnceWith(integration, args);
+  });
+
+  it('uses source history to avoid premium when recent usage is too fast', async () => {
+    vi.mocked(files.readUsageHistory).mockImplementation(async (provider) => provider === source ? [{
+      observedAt: new Date(Date.parse(usage.observedAt) - 2 * 60 * 60_000).toISOString(),
+      used: 20, resetsAt: usage.resetsAt, identityHash: usage.identityHash,
+    }] : []);
+    await main(['run', integration, ...args]);
+    expect(launch.launchProvider).toHaveBeenCalledExactlyOnceWith(integration, args);
+  });
+
+  it.each([true, false])('applies a workload forecast only for the matching reset window (%s)', async (sameWindow) => {
+    vi.mocked(files.readForecast).mockImplementation(async (provider) => provider === source ? {
+      provider: source, resetAt: sameWindow ? usage.resetsAt : usage.observedAt,
+      expectedUsagePercent: 70, source: 'explicit', setAt: usage.observedAt, identityHash: usage.identityHash,
+    } : undefined);
+    await main(['run', integration, ...args]);
+    if (sameWindow) expect(launch.launchProvider).toHaveBeenCalledExactlyOnceWith(integration, args);
+    else expectPremiumLaunch();
   });
 });

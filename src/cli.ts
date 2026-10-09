@@ -263,7 +263,13 @@ const prepareIntegration = async (integration: Integration): Promise<{ readonly 
       ...config.providers[usage.provider], premiumModel: settings.premiumModel,
       premiumEffort: settings.premiumEffort ?? '',
     };
-    return { decision: decide({ usage, config: providerConfig }), ...(settings.premiumEffort ? { effort: settings.premiumEffort } : {}) };
+    const previous = await readState(usage.provider);
+    const history = await readUsageHistory(usage.provider);
+    const forecast = await readForecast(usage.provider);
+    return {
+      decision: decide({ usage, config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) }),
+      ...(settings.premiumEffort ? { effort: settings.premiumEffort } : {}),
+    };
   }
   const source = await readPiSource();
   if (!source) return { decision: integrationFallback('Pi has no unambiguous Claude or Codex default provider.') };
@@ -271,8 +277,12 @@ const prepareIntegration = async (integration: Integration): Promise<{ readonly 
   if (!target) return { decision: integrationFallback(`Configure Pi's ${source} subscription source to enable routing.`) };
   if (!await hasPiSubscriptionAuth(source)) return { decision: integrationFallback('Pi did not confirm OAuth subscription authentication.') };
   const usage = source === 'claude' ? (await getClaudeUsage()).usage : (await discoverCodex())?.usage;
+  const previous = await readState(source);
+  const history = await readUsageHistory(source);
+  const forecast = await readForecast(source);
+  const providerConfig = { ...config.providers[source], premiumModel: target.premiumModel, premiumEffort: target.premiumEffort ?? '' };
   return {
-    decision: decide({ ...(usage ? { usage } : {}), config: { ...config.providers[source], premiumModel: target.premiumModel, premiumEffort: target.premiumEffort ?? '' } }),
+    decision: decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) }),
     source, ...(target.premiumEffort ? { effort: target.premiumEffort } : {}),
   };
 };
