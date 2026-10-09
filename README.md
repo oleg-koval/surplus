@@ -96,6 +96,8 @@ See [the implementation plan](docs/PLAN.md), [launch and measurement plan](docs/
 
 ## Contributing
 
+Agents can use the [Surplus skill](skills/surplus/SKILL.md) for installation, configuration, status checks, and troubleshooting. In this repository, [AGENTS.md](AGENTS.md) points agents to it. To install the skill in a compatible agent, run `npx skills add oleg-koval/surplus --skill surplus`.
+
 ```sh
 npm ci
 npm run ci
