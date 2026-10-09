@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import type { Features, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
+import type { Features, Integration, IntegrationConfig, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
 import { surplusDataDirectory, xdgDirectory } from './xdg.js';
 
 export const dataDir = (): string => surplusDataDirectory();
@@ -84,12 +84,33 @@ const isFeatures = (value: unknown): boolean => {
 /**
  * Purely checks the version, both provider configurations, and optional features without applying defaults.
  */
-const isSurplusConfig = (value: unknown): value is { readonly version: 1; readonly providers: Record<Provider, ProviderConfig>; readonly features?: Partial<Features> } => {
+const isIntegrationConfig = (value: unknown): value is IntegrationConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const validModel = (model: unknown): boolean => typeof model === 'string' && model.length > 0;
+  const validEffort = (effort: unknown): boolean => effort === undefined || (typeof effort === 'string' && effort.length > 0);
+  const validSource = (source: unknown): boolean => typeof source === 'object' && source !== null && !Array.isArray(source)
+    && validModel((source as Record<string, unknown>).premiumModel)
+    && validEffort((source as Record<string, unknown>).premiumEffort);
+  const sources = row.sources;
+  return (row.premiumModel === undefined || validModel(row.premiumModel)) && validEffort(row.premiumEffort)
+    && (sources === undefined || (typeof sources === 'object' && sources !== null && !Array.isArray(sources)
+      && Object.entries(sources).every(([key, source]) => (key === 'claude' || key === 'codex') && validSource(source))));
+};
+
+const isIntegrations = (value: unknown): value is Partial<Record<Integration, IntegrationConfig>> => {
+  if (value === undefined) return true;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return (row.hermes === undefined || isIntegrationConfig(row.hermes)) && (row.pi === undefined || isIntegrationConfig(row.pi));
+};
+
+const isSurplusConfig = (value: unknown): value is { readonly version: 1; readonly providers: Record<Provider, ProviderConfig>; readonly integrations?: Partial<Record<Integration, IntegrationConfig>>; readonly features?: Partial<Features> } => {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
   if (row.version !== 1 || typeof row.providers !== 'object' || row.providers === null) return false;
   const providers = row.providers as Record<string, unknown>;
-  return isProviderConfig(providers.claude) && isProviderConfig(providers.codex) && isFeatures(row.features);
+  return isProviderConfig(providers.claude) && isProviderConfig(providers.codex) && isFeatures(row.features) && isIntegrations(row.integrations);
 };
 
 /**
@@ -122,6 +143,7 @@ export const readConfig = async (): Promise<SurplusConfig> => {
   return {
     version: 1,
     providers: { claude: withPaceDefaults('claude', saved.providers.claude), codex: withPaceDefaults('codex', saved.providers.codex) },
+    integrations: { ...defaultConfig.integrations, ...saved.integrations },
     features: { ...defaultFeatures, ...saved.features },
   };
 };
@@ -262,6 +284,7 @@ export const defaultFeatures: Features = { sessionNotice: true, promptNudge: fal
 export const defaultConfig: SurplusConfig = {
   version: 1,
   features: defaultFeatures,
+  integrations: { hermes: {}, pi: {} },
   providers: {
     claude: {
       premiumModel: 'opus', minWeeklyRemainingPercent: 25,

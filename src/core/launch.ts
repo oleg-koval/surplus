@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import type { Provider } from './types.js';
+import type { Client, Provider } from './types.js';
 import { managedWrapperContents } from './managed-wrapper.js';
 import { resolveHomeDirectory, surplusDataDirectory } from './xdg.js';
 
@@ -115,7 +115,7 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
   return undefined;
 };
 
-export const launchProvider = async (provider: Provider, args: readonly string[], env = process.env, onStarted?: () => Promise<void>): Promise<number> => {
+export const launchProvider = async (provider: Client, args: readonly string[], env = process.env, onStarted?: () => Promise<void>): Promise<number> => {
   const executable = await findExecutable(provider, env);
   if (!executable) throw new Error(`Could not find the original ${provider} executable in PATH.`);
   if (process.platform !== 'win32') {

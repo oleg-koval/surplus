@@ -133,7 +133,7 @@ export const installShell = async (): Promise<void> => {
   const rcs = await shellRcs();
   const wrappersToCreate: string[] = [];
   const wrappersToRepair: { readonly path: string; readonly mode: number }[] = [];
-  for (const provider of ['claude', 'codex']) {
+  for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
     const path = join(bin, provider);
     try {
       const current = await readFile(path, 'utf8');
@@ -220,7 +220,7 @@ export const uninstallShell = async (): Promise<void> => {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') recordFailure(path, error);
     }
   }
-  for (const provider of ['claude', 'codex']) {
+  for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
     const path = join(managedBin(), provider);
     try {
       const contents = await readFile(path, 'utf8');

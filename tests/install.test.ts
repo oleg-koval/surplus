@@ -30,6 +30,21 @@ afterEach(async () => {
 });
 
 describe('reversible install', () => {
+  it('installs and removes Hermes and Pi wrappers with the other managed commands', async () => {
+    await withHome(async (home) => {
+      await installShell();
+      for (const provider of ['hermes', 'pi']) {
+        const path = join(home, 'state', 'surplus', 'bin', provider);
+        expect(await readFile(path, 'utf8')).toBe(`#!/bin/sh\nexec surplus run ${provider} "$@"\n`);
+        expect((await stat(path)).mode & 0o100).not.toBe(0);
+      }
+      await uninstallShell();
+      for (const provider of ['hermes', 'pi']) {
+        await expect(readFile(join(home, 'state', 'surplus', 'bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+  });
+
   it('uses the operating-system home only when HOME is unset', () => {
     const previousHome = process.env.HOME;
     delete process.env.HOME;
@@ -376,7 +391,7 @@ describe('reversible install', () => {
 
       expect(await readFile(bashrc, 'utf8')).toBe(damaged);
       expect(await readFile(join(home, '.bash_profile'), 'utf8')).toBe('');
-      for (const provider of ['claude', 'codex']) {
+      for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
         await expect(readFile(join(home, 'state/surplus/bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       }
     });
@@ -393,7 +408,7 @@ describe('reversible install', () => {
       const failure = await uninstallShell().catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(AggregateError);
       for (const path of paths) expect((failure as AggregateError).message).toContain(path);
-      for (const provider of ['claude', 'codex']) {
+      for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
         await expect(readFile(join(home, 'state/surplus/bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       }
     });

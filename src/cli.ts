@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { basename } from 'node:path';
 import { constants as osConstants } from 'node:os';
-import type { Features, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
+import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
 import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig } from './core/files.js';
@@ -12,29 +12,34 @@ import { appendEffort, appendModel, hasExplicitOverride, launchProvider, shouldA
 import { installClaudeStatusLine, installShell, uninstallClaudeStatusLine, uninstallShell } from './install/shell.js';
 import { parseClaudeStatusLine, readClaudeIdentityHash, readStatusLineInput } from './providers/claude.js';
 import { discoverCodex, killCodexAppServers } from './providers/codex.js';
+import { discoverHermes, isSimpleHermesLaunch } from './integrations/hermes.js';
+import { hasPiSubscriptionAuth, isSimplePiLaunch, readPiSource } from './integrations/pi.js';
 
 const usageText = `Surplus — use more of your included AI coding allowance before it resets.
 
 Usage:
   surplus install [--no-claude-capture] [--no-hooks]
   surplus uninstall
-  surplus status [claude|codex]
+  surplus status [claude|codex|hermes|pi]
   surplus forecast <claude|codex> <0-100|status|clear>
-  surplus run <claude|codex> [provider arguments...]
+  surplus run <claude|codex|hermes|pi> [provider arguments...]
   surplus configure <claude|codex> [--premium MODEL] [--effort LEVEL]
+  surplus configure hermes --premium MODEL [--effort LEVEL]
+  surplus configure pi --source <claude|codex> --premium MODEL [--effort LEVEL]
   surplus configure features [--session-notice on|off] [--prompt-nudge on|off] [--statusline-segment on|off]
   surplus hook <claude|codex> <session-start|prompt-submit>   (called by the provider, prints a short notice or nothing)
   surplus demo
 `;
 
 const isProvider = (value: string | undefined): value is Provider => value === 'claude' || value === 'codex';
+const isIntegration = (value: string | undefined): value is Integration => value === 'hermes' || value === 'pi';
 const configured = (config: Awaited<ReturnType<typeof readConfig>>, provider: Provider): ProviderConfig => config.providers[provider];
 const minutes = (value: number): string => `${String(value)}m`;
 const osSignalNumber = (signal: NodeJS.Signals): number | undefined => osConstants.signals[signal];
 const maxChainedStatusLineOutputBytes = 1024 * 1024;
 const identityCacheMs = 10 * 60_000;
 
-export const routedChildEnvironment = (provider: Provider, identityHash: string | undefined, tier: 'default' | 'premium', parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
+export const routedChildEnvironment = (provider: Client, identityHash: string | undefined, tier: 'default' | 'premium', parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
   const child: NodeJS.ProcessEnv = { ...parent };
   if (provider === 'claude' && identityHash) child.SURPLUS_CLAUDE_IDENTITY_HASH = identityHash;
   if (tier === 'premium') child.SURPLUS_ROUTED_TIER = 'premium';
@@ -242,6 +247,87 @@ const status = async (provider: Provider): Promise<void> => {
   }
 };
 
+const integrationFallback = (reason: string): Decision => ({
+  tier: 'default', model: 'provider default', reason, weeklyRemainingPercent: null, minutesUntilReset: null,
+});
+
+/** Uses the client's own quota view for Hermes and an explicitly shared subscription for Pi. */
+const prepareIntegration = async (integration: Integration): Promise<{ readonly decision: Decision; readonly source?: Provider; readonly effort?: string }> => {
+  const config = await readConfig();
+  const settings = config.integrations[integration];
+  if (integration === 'hermes') {
+    if (!settings.premiumModel) return { decision: integrationFallback('Configure a Hermes premium model to enable routing.') };
+    const usage = await discoverHermes();
+    if (!usage) return { decision: integrationFallback('Hermes did not report a supported subscription quota.') };
+    const providerConfig = {
+      ...config.providers[usage.provider], premiumModel: settings.premiumModel,
+      premiumEffort: settings.premiumEffort ?? '',
+    };
+    return { decision: decide({ usage, config: providerConfig }), ...(settings.premiumEffort ? { effort: settings.premiumEffort } : {}) };
+  }
+  const source = await readPiSource();
+  if (!source) return { decision: integrationFallback('Pi has no unambiguous Claude or Codex default provider.') };
+  const target = settings.sources?.[source];
+  if (!target) return { decision: integrationFallback(`Configure Pi's ${source} subscription source to enable routing.`) };
+  if (!await hasPiSubscriptionAuth(source)) return { decision: integrationFallback('Pi did not confirm OAuth subscription authentication.') };
+  const usage = source === 'claude' ? (await getClaudeUsage()).usage : (await discoverCodex())?.usage;
+  return {
+    decision: decide({ ...(usage ? { usage } : {}), config: { ...config.providers[source], premiumModel: target.premiumModel, premiumEffort: target.premiumEffort ?? '' } }),
+    source, ...(target.premiumEffort ? { effort: target.premiumEffort } : {}),
+  };
+};
+
+const runIntegration = async (integration: Integration, args: string[]): Promise<void> => {
+  const simple = integration === 'hermes' ? isSimpleHermesLaunch(args) : isSimplePiLaunch(args);
+  if (!simple || !shouldAutomaticallyRoute(process.stdin.isTTY, process.stdout.isTTY)) {
+    process.exitCode = await launchProvider(integration, args);
+    return;
+  }
+  let prepared: Awaited<ReturnType<typeof prepareIntegration>>;
+  try { prepared = await prepareIntegration(integration); } catch {
+    process.exitCode = await launchProvider(integration, args);
+    return;
+  }
+  if (prepared.decision.tier !== 'premium') {
+    process.exitCode = await launchProvider(integration, args);
+    return;
+  }
+  if (integration === 'pi' && !prepared.source) {
+    process.exitCode = await launchProvider(integration, args);
+    return;
+  }
+  showDecision(prepared.decision);
+  const { source, effort } = prepared;
+  const selected = integration === 'pi'
+    ? ['--provider', source === 'claude' ? 'anthropic' : 'openai-codex', '--model', prepared.decision.model, ...(effort ? ['--thinking', effort] : []), ...args]
+    : ['--model', prepared.decision.model, ...(effort ? ['--reasoning', effort] : []), ...args];
+  process.exitCode = await launchProvider(integration, selected, routedChildEnvironment(integration, undefined, 'premium'));
+};
+
+const configureIntegration = async (integration: Integration, args: string[]): Promise<void> => {
+  const values: Record<string, string> = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index] ?? '';
+    const value = args[index + 1];
+    if (!['--source', '--premium', '--effort'].includes(flag) || !value) throw new Error('Use --source, --premium, and optional --effort pairs.');
+    values[flag] = value;
+  }
+  const model = values['--premium'];
+  const effort = values['--effort'];
+  if (!model || (integration === 'hermes' && values['--source'])
+    || (integration === 'pi' && values['--source'] !== 'claude' && values['--source'] !== 'codex')) {
+    throw new Error(integration === 'pi' ? 'Pi needs --source claude|codex and --premium MODEL.' : 'Hermes needs --premium MODEL.');
+  }
+  await updateConfig((latest) => {
+    const current = latest.integrations[integration];
+    const updated = integration === 'pi'
+      ? { ...current, sources: { ...current.sources, [values['--source'] as Provider]: { premiumModel: model, ...(effort ? { premiumEffort: effort } : {}) } } }
+      : { ...current, premiumModel: model, ...(effort ? { premiumEffort: effort } : {}) };
+    return { ...latest, integrations: { ...latest.integrations, [integration]: updated } };
+  });
+  process.stdout.write(`Saved ${integration} preferences in the private Surplus config.\n`);
+};
+
 const forecast = async (provider: Provider, args: string[]): Promise<void> => {
   if (args.length !== 1) throw new Error('Use surplus forecast <claude|codex> <0-100|status|clear>.');
   const action = args[0] ?? '';
@@ -378,7 +464,7 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
       if (captureInstalled) await uninstallClaudeStatusLine();
       throw error;
     }
-    process.stdout.write('Surplus installed. Open a new terminal to activate Claude Code and Codex wrappers.\n');
+    process.stdout.write('Surplus installed. Open a new terminal to activate Claude Code, Codex, Hermes, and Pi wrappers.\n');
     return;
   }
   if (command === 'uninstall') {
@@ -396,10 +482,14 @@ export const main = async (args = process.argv.slice(2)): Promise<void> => {
   if (command === 'demo') { demo(); return; }
   if (command === 'forecast' && isProvider(first)) { await forecast(first, rest); return; }
   if (command === 'status' && isProvider(first)) { await status(first); return; }
+  if (command === 'status' && isIntegration(first)) { showDecision((await prepareIntegration(first)).decision); return; }
   if (command === 'configure' && first === 'features') { await configureFeatures(rest); return; }
   if (command === 'configure' && isProvider(first)) { await configure(first, rest); return; }
+  if (command === 'configure' && isIntegration(first)) { await configureIntegration(first, rest); return; }
   if (command === 'run' && isProvider(first)) { await run(first, rest); return; }
+  if (command === 'run' && isIntegration(first)) { await runIntegration(first, rest); return; }
   if (isProvider(command)) { await run(command, [first, ...rest].filter((value): value is string => value !== undefined)); return; }
+  if (isIntegration(command)) { await runIntegration(command, [first, ...rest].filter((value): value is string => value !== undefined)); return; }
   process.stderr.write(usageText);
   process.exitCode = 2;
 };

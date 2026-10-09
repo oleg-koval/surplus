@@ -1,4 +1,13 @@
 export type Provider = 'claude' | 'codex';
+export type Integration = 'hermes' | 'pi';
+export type Client = Provider | Integration;
+
+export interface IntegrationConfig {
+  readonly premiumModel?: string;
+  readonly premiumEffort?: string;
+  /** Pi sources are enabled individually and must use the same account as Surplus's quota reader. */
+  readonly sources?: Partial<Record<Provider, { readonly premiumModel: string; readonly premiumEffort?: string }>>;
+}
 
 export interface UsageSnapshot {
   readonly provider: Provider;
@@ -48,6 +57,7 @@ export interface ProviderConfig {
 export interface SurplusConfig {
   readonly version: 1;
   readonly providers: Readonly<Record<Provider, ProviderConfig>>;
+  readonly integrations: Readonly<Record<Integration, IntegrationConfig>>;
   readonly features: Features;
 }
 
