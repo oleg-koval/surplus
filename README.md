@@ -2,11 +2,11 @@
 
 **Saved allowance. Stronger settings.**
 
-Surplus watches the included usage windows exposed by Claude Code and Codex CLI. When your usage pace says part of the weekly allowance would otherwise go unused, it can start a new interactive session with a model or reasoning level you choose, and it can tell you inside Claude Code and Codex when a premium window is open.
+Surplus watches the included usage windows exposed by Claude Code and Codex CLI. When your usage pace says part of the weekly allowance would otherwise go unused, it can start a new interactive session with a model or reasoning level you choose. It also supports Hermes Agent and Pi when configured for a Claude or Codex subscription.
 
 ## Install
 
-Requires POSIX Node.js 22.21+ or 24.10+, plus Claude Code and/or Codex CLI. POSIX wrappers use stable `process.execve` for provider launches, preserving the provider PID, terminal signals, and job control. Automatic model selection remains limited to fully interactive terminals. Windows integration is unsupported; shell installation supports zsh and bash.
+Requires POSIX Node.js 22.21+ or 24.10+, plus at least one supported CLI. POSIX wrappers use stable `process.execve` for provider launches, preserving the provider PID, terminal signals, and job control. Automatic model selection remains limited to fully interactive terminals. Windows integration is unsupported; shell installation supports zsh and bash.
 
 Codex usage and model discovery were verified with Codex CLI 0.160.1 and its app-server protocol. Older Codex clients that do not expose the required protocol fields safely keep their normal settings.
 
@@ -25,7 +25,7 @@ npm install --global "./$(npm pack --silent | tail -n 1)"
 surplus install
 ```
 
-Open a new terminal. Then use `claude` or `codex` as usual. Surplus installs small managed wrappers ahead of the original commands. It also chains Claude Code's existing command statusline so future usage readings are cached, and it adds a session-start hook to Claude Code and Codex (see [Notices](#notices-and-features)). Run `surplus uninstall` to restore the prior statusline and remove Surplus-owned shell entries, wrappers and hooks.
+Open a new terminal. Then use `claude`, `codex`, `hermes`, or `pi` as usual. Surplus installs small managed wrappers ahead of the original commands. It also chains Claude Code's existing command statusline so future usage readings are cached, and it adds a session-start hook to Claude Code and Codex (see [Notices](#notices-and-features)). Run `surplus uninstall` to restore the prior statusline and remove Surplus-owned shell entries, wrappers and hooks.
 
 Surplus honors Claude Code's `CLAUDE_CONFIG_DIR` when reading or updating `settings.json`. Its statusline backup is bound to that exact settings path, so use the same `CLAUDE_CONFIG_DIR` value when uninstalling; Surplus refuses to restore a backup into a different profile.
 
@@ -41,6 +41,8 @@ At each new interactive launch, Surplus checks the provider's weekly window and 
 You can reserve more allowance for a heavier remainder of the current week with a reset-scoped forecast. For example, `surplus forecast claude 20` tells Surplus to budget 20% expected usage before the current reset. Surplus takes the safer maximum of that forecast and the configured `expectedUsageUntilResetPercent` baseline, so a forecast cannot weaken the normal guard. Forecasts are local, provider-specific, Claude-account-bound, and automatically ignored after the reset window or account changes; Surplus does not inspect prompts, repositories, or task text.
 
 Claude's default premium target is `opus`; outside a premium window, Surplus passes the original command through unchanged, including your normal model choice. Codex keeps the model selected by the user's effective Codex config and raises reasoning effort to `high` only when Codex's live model catalog confirms that effort for that exact model. Set a specific Codex premium model once with `surplus configure codex --premium MODEL` if you want model selection as well.
+
+Hermes reads its own `hermes usage --json` account limits for the configured Anthropic or OpenAI Codex subscription. Configure a premium model before Hermes routing can start. Pi reads its `defaultProvider` from `~/.pi/agent/settings.json` (or `PI_CODING_AGENT_DIR`) and uses the corresponding Surplus Claude or Codex quota reader. Configure a separate premium model for each Pi subscription you use. Pi must report OAuth authentication through `pi auth check --json`, and it must be signed in to the **same account** as the matching Claude Code or Codex CLI; Surplus cannot establish account identity across the two clients. Hermes and Pi route only a fresh, fully interactive launch with no options (`hermes chat` also qualifies); other invocations pass through. A Pi project `.pi/settings.json` can override the default after a trust prompt, so Surplus leaves that project's Pi launch unchanged.
 
 Explicit model or effort flags, config/profile overrides, resumed sessions, background sessions, cloud sessions, noninteractive output, API-key or third-party Claude billing, and provider utility commands pass through unchanged. Surplus never edits the provider's model settings and never makes a model call to measure usage.
 
@@ -72,16 +74,21 @@ surplus forecast claude status        # inspect the saved forecast
 surplus forecast claude clear         # remove the reset-scoped forecast
 surplus configure claude --premium opus
 surplus configure codex --premium MODEL --effort high
+surplus configure hermes --premium MODEL --effort high
+surplus configure pi --source claude --premium CLAUDE_MODEL
+surplus configure pi --source codex --premium CODEX_MODEL --effort high
+surplus status hermes                 # Hermes's live account limits and decision
+surplus status pi                     # Pi's configured subscription and decision
 surplus configure features --session-notice on|off --prompt-nudge on|off --statusline-segment on|off
 surplus demo                          # deterministic sample, no account access
 surplus uninstall
 ```
 
-Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`. Local usage, a short usage history (current window only, at most 300 samples per provider), reset-scoped workload forecasts, per-session notice memory, account identity hashes, and policy state live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
+Provider configuration lives in `${XDG_CONFIG_HOME:-~/.config}/surplus/config.json`; Hermes and Pi targets live in `integrations.json` in the same directory so older Surplus versions cannot erase them. Local usage, a short usage history (current window only, at most 300 samples per provider), reset-scoped workload forecasts, per-session notice memory, account identity hashes, and policy state live under `${XDG_STATE_HOME:-~/.local/state}/surplus`. Files are private to your account. Surplus sends no analytics or usage events; Codex's app-server fetches usage metadata through its normal provider connection.
 
 ## Important limits
 
-Provider usage windows are shared allowance signals, not a promise that a particular model has a separate premium bucket. Surplus only uses Claude's documented five-hour and seven-day subscription rate limits, or Codex's app-server windows and `ordinaryUsageAllowed` result. Missing, stale, malformed, or disallowed data selects the provider's normal defaults.
+Provider usage windows are shared allowance signals, not a promise that a particular model has a separate premium bucket. Surplus uses Claude's documented five-hour and seven-day subscription rate limits, Codex's app-server windows and `ordinaryUsageAllowed` result, or Hermes's documented account-limit JSON for Anthropic and OpenAI Codex. Pi uses the matching Claude or Codex reader only after you configure that source. Missing, stale, malformed, or disallowed data selects the provider's normal defaults. Hermes and Pi do not receive the Claude/Codex in-session hooks, workload forecasts, or separate history yet.
 
 Surplus cannot prevent charges from paid-overage settings already enabled in a provider account. It does not change billing settings. Codex model discovery describes supported models and reasoning options; it does not reliably label which model is “premium,” so Surplus does not infer a model ranking. A configured premium model is your choice. If Codex does not report a valid weekly window or does not confirm included usage, Surplus keeps the normal settings. A present but malformed short window also disables automatic selection.
 

@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import type { Provider } from './types.js';
+import type { Client, Provider } from './types.js';
 import { managedWrapperContents } from './managed-wrapper.js';
 import { resolveHomeDirectory, surplusDataDirectory } from './xdg.js';
 
@@ -42,8 +42,9 @@ const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
   return undefined;
 };
 
-export const hasExplicitOverride = (provider: Provider, args: readonly string[], env = process.env): boolean => {
+export const hasExplicitOverride = (provider: Client, args: readonly string[], env = process.env): boolean => {
   if (env.SURPLUS_MODEL || env.SURPLUS_EFFORT) return true;
+  if (provider === 'hermes' || provider === 'pi') return false;
   if ((provider === 'claude' && env.ANTHROPIC_MODEL) || (provider === 'codex' && env.CODEX_MODEL)) return true;
   if (provider === 'claude' && (env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_BASE_URL || env.CLAUDE_CODE_USE_BEDROCK || env.CLAUDE_CODE_USE_VERTEX || env.CLAUDE_CODE_USE_FOUNDRY || env.CLAUDE_CODE_EFFORT_LEVEL)) return true;
   const sentinel = args.indexOf('--');
@@ -115,7 +116,7 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
   return undefined;
 };
 
-export const launchProvider = async (provider: Provider, args: readonly string[], env = process.env, onStarted?: () => Promise<void>): Promise<number> => {
+export const launchProvider = async (provider: Client, args: readonly string[], env = process.env, onStarted?: () => Promise<void>): Promise<number> => {
   const executable = await findExecutable(provider, env);
   if (!executable) throw new Error(`Could not find the original ${provider} executable in PATH.`);
   if (process.platform !== 'win32') {

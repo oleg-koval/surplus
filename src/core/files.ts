@@ -1,11 +1,12 @@
 import { chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import type { Features, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
+import type { Features, Integration, IntegrationConfig, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
 import { surplusDataDirectory, xdgDirectory } from './xdg.js';
 
 export const dataDir = (): string => surplusDataDirectory();
 export const configPath = (): string => join(xdgDirectory('config'), 'surplus', 'config.json');
+export const integrationsPath = (): string => join(xdgDirectory('config'), 'surplus', 'integrations.json');
 const usagePath = (provider: Provider): string => join(dataDir(), `${provider}-usage.json`);
 const statePath = (provider: Provider): string => join(dataDir(), `${provider}-state.json`);
 const historyPath = (provider: Provider): string => join(dataDir(), `${provider}-usage-history.json`);
@@ -84,12 +85,33 @@ const isFeatures = (value: unknown): boolean => {
 /**
  * Purely checks the version, both provider configurations, and optional features without applying defaults.
  */
-const isSurplusConfig = (value: unknown): value is { readonly version: 1; readonly providers: Record<Provider, ProviderConfig>; readonly features?: Partial<Features> } => {
+const isIntegrationConfig = (value: unknown): value is IntegrationConfig => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const validModel = (model: unknown): boolean => typeof model === 'string' && model.length > 0;
+  const validEffort = (effort: unknown): boolean => effort === undefined || (typeof effort === 'string' && effort.length > 0);
+  const validSource = (source: unknown): boolean => typeof source === 'object' && source !== null && !Array.isArray(source)
+    && validModel((source as Record<string, unknown>).premiumModel)
+    && validEffort((source as Record<string, unknown>).premiumEffort);
+  const sources = row.sources;
+  return (row.premiumModel === undefined || validModel(row.premiumModel)) && validEffort(row.premiumEffort)
+    && (sources === undefined || (typeof sources === 'object' && sources !== null && !Array.isArray(sources)
+      && Object.entries(sources).every(([key, source]) => (key === 'claude' || key === 'codex') && validSource(source))));
+};
+
+const isIntegrations = (value: unknown): value is Partial<Record<Integration, IntegrationConfig>> => {
+  if (value === undefined) return true;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return (row.hermes === undefined || isIntegrationConfig(row.hermes)) && (row.pi === undefined || isIntegrationConfig(row.pi));
+};
+
+const isSurplusConfig = (value: unknown): value is { readonly version: 1; readonly providers: Record<Provider, ProviderConfig>; readonly integrations?: Partial<Record<Integration, IntegrationConfig>>; readonly features?: Partial<Features> } => {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Record<string, unknown>;
   if (row.version !== 1 || typeof row.providers !== 'object' || row.providers === null) return false;
   const providers = row.providers as Record<string, unknown>;
-  return isProviderConfig(providers.claude) && isProviderConfig(providers.codex) && isFeatures(row.features);
+  return isProviderConfig(providers.claude) && isProviderConfig(providers.codex) && isFeatures(row.features) && isIntegrations(row.integrations);
 };
 
 /**
@@ -110,18 +132,31 @@ const withPaceDefaults = (provider: Provider, saved: ProviderConfig): ProviderCo
  * Reads the local config and returns validated settings with pace and feature defaults, or all defaults when the file is missing.
  * Performs filesystem IO and rejects on invalid home-directory configuration, other read failures, malformed JSON, or invalid settings.
  */
-export const readConfig = async (): Promise<SurplusConfig> => {
+const readIntegrations = async (fallback: Partial<Record<Integration, IntegrationConfig>> = {}): Promise<SurplusConfig['integrations']> => {
   let source: string;
-  try { source = await readFile(configPath(), 'utf8'); } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaultConfig;
+  try { source = await readFile(integrationsPath(), 'utf8'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ...defaultConfig.integrations, ...fallback };
     throw error;
   }
+  let saved: unknown;
+  try { saved = JSON.parse(source) as unknown; } catch { throw new Error('Surplus integration config is malformed; automatic selection is disabled until it is fixed.'); }
+  if (!isIntegrations(saved)) throw new Error('Surplus integration config is invalid; automatic selection is disabled until it is fixed.');
+  return { ...defaultConfig.integrations, ...saved };
+};
+
+export const readConfig = async (): Promise<SurplusConfig> => {
+  let source: string | undefined;
+  try { source = await readFile(configPath(), 'utf8'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (source === undefined) return { ...defaultConfig, integrations: await readIntegrations() };
   let saved: unknown;
   try { saved = JSON.parse(source) as unknown; } catch { throw new Error('Surplus config is malformed; automatic selection is disabled until it is fixed.'); }
   if (!isSurplusConfig(saved)) throw new Error('Surplus config is invalid; automatic selection is disabled until it is fixed.');
   return {
     version: 1,
     providers: { claude: withPaceDefaults('claude', saved.providers.claude), codex: withPaceDefaults('codex', saved.providers.codex) },
+    integrations: await readIntegrations(saved.integrations),
     features: { ...defaultFeatures, ...saved.features },
   };
 };
@@ -129,9 +164,15 @@ export const readConfig = async (): Promise<SurplusConfig> => {
 export const saveConfig = (config: SurplusConfig): Promise<void> => atomicJson(configPath(), config);
 export const updateConfig = async (update: (latest: SurplusConfig) => SurplusConfig): Promise<SurplusConfig> => withFileLock(configPath(), async () => {
   const updated = update(await readConfig());
-  await atomicJson(configPath(), updated);
+  await saveConfig(updated);
   return updated;
 });
+export const updateIntegrations = async (update: (latest: SurplusConfig['integrations']) => SurplusConfig['integrations']): Promise<void> => {
+  await withFileLock(integrationsPath(), async () => {
+    const current = await readConfig();
+    await atomicJson(integrationsPath(), update(current.integrations));
+  });
+};
 export const maxHistoryEntries = 300;
 export const historyThrottleMinutes = 10;
 
@@ -262,6 +303,7 @@ export const defaultFeatures: Features = { sessionNotice: true, promptNudge: fal
 export const defaultConfig: SurplusConfig = {
   version: 1,
   features: defaultFeatures,
+  integrations: { hermes: {}, pi: {} },
   providers: {
     claude: {
       premiumModel: 'opus', minWeeklyRemainingPercent: 25,
