@@ -25,7 +25,7 @@ Add an automatic forecast with `source: 'history'`. The `WorkloadForecast` type 
 
 - Derive expected usage from the existing local per-provider history for the current window, for example the largest 24-hour burn observed this window, or a day-to-day variance band.
 - Show it first as a suggestion in `surplus status`, with the statistic and sample count, before it affects any decision.
-- When applied, combine it only through `max()` with the configured baseline and any explicit forecast, so it can never weaken the baseline. An explicit forecast wins when both exist.
+- When applied, use an explicit forecast if present; otherwise use the automatic history estimate. Combine the selected forecast with the configured baseline through `max()`, so it can never weaken the baseline.
 
 ## Scope
 
@@ -38,7 +38,7 @@ Add an automatic forecast with `source: 'history'`. The `WorkloadForecast` type 
 
 - With too few samples, no automatic forecast is produced and behavior is identical to today.
 - The suggestion appears in `surplus status` and is labelled as automatic.
-- The effective expected usage is never lower than the configured baseline or an explicit forecast.
+- When an explicit forecast is present, use it instead of the automatic history estimate; otherwise use the automatic estimate. Effective expected usage is `max(configured baseline, selected forecast)`, so the baseline cannot be weakened.
 - An automatic forecast from one account or reset window is never applied to another.
 - Disabling it in config restores today's behavior exactly.
 - Policy tests cover each case above.
