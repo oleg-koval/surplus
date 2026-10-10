@@ -15,6 +15,43 @@ const paceSettings = (config: ProviderConfig, provider: UsageSnapshot['provider'
 
 const percent = (value: number): string => String(Math.max(0, Math.round(value)));
 
+interface PolicyGuards {
+  readonly activeForecast: WorkloadForecast | undefined;
+  readonly expectedUsage: number;
+  readonly activePremium: boolean;
+  readonly weeklyFloor: number;
+  readonly paceMargin: number;
+  readonly requiredHeadroom: number;
+  readonly weeklyGuard: number;
+  readonly paceGuard: number;
+}
+
+/** The policy thresholds for this reset window, shared by routing and status output. */
+export const policyGuards = (input: {
+  readonly config: ProviderConfig;
+  readonly usage?: UsageSnapshot;
+  readonly previous?: ProviderState;
+  readonly forecast?: WorkloadForecast;
+  readonly now?: Date;
+}): PolicyGuards => {
+  const { config, usage, previous, forecast, now = new Date() } = input;
+  const currentWindow = usage && Date.parse(usage.resetsAt) > now.getTime();
+  const activeForecast = currentWindow && forecast?.provider === usage.provider && forecast.resetAt === usage.resetsAt
+    && (usage.provider === 'codex' || (typeof usage.identityHash === 'string' && forecast.identityHash === usage.identityHash))
+    && Number.isFinite(forecast.expectedUsagePercent) && forecast.expectedUsagePercent >= 0 && forecast.expectedUsagePercent <= 100
+    ? forecast : undefined;
+  const expectedUsage = Math.max(config.expectedUsageUntilResetPercent, activeForecast?.expectedUsagePercent ?? 0);
+  const activePremium = Boolean(currentWindow && previous?.resetAt === usage.resetsAt && previous.tier === 'premium');
+  const weeklyFloor = config.minWeeklyRemainingPercent - (activePremium ? config.hysteresisPercent : 0);
+  const paceMargin = Math.max(0, paceSettings(config, usage?.provider ?? 'claude').margin - (activePremium ? config.hysteresisPercent : 0));
+  return {
+    activeForecast, expectedUsage, activePremium, weeklyFloor, paceMargin,
+    requiredHeadroom: config.reservePercent + expectedUsage,
+    weeklyGuard: Math.max(weeklyFloor, config.reservePercent + expectedUsage),
+    paceGuard: config.reservePercent + paceMargin,
+  };
+};
+
 /**
  * Purely projects unused allowance at premium burn and, when default burn exhausts allowance early, rounded minutes before reset at exhaustion.
  * Returns undefined until elapsed time is positive, finite, and meets the configured minimum.
@@ -103,33 +140,23 @@ export const decide = (input: {
   const remaining = Math.max(0, 100 - usage.weeklyUsedPercent - debit);
   const sessionRemaining = typeof sessionUsed === 'number' ? 100 - sessionUsed : 100;
   const minutesUntilReset = Math.floor((reset - now.getTime()) / 60_000);
-  const activeForecast = forecast?.provider === usage.provider && forecast.resetAt === usage.resetsAt
-    && (usage.provider === 'codex' || (typeof usage.identityHash === 'string' && forecast.identityHash === usage.identityHash))
-    && Number.isFinite(forecast.expectedUsagePercent) && forecast.expectedUsagePercent >= 0 && forecast.expectedUsagePercent <= 100
-    ? forecast : undefined;
-  const effectiveExpectedUsage = Math.max(config.expectedUsageUntilResetPercent, activeForecast?.expectedUsagePercent ?? 0);
+  const guards = policyGuards({ config, usage, ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
+  const { activeForecast, activePremium } = guards;
   const forecastReason = activeForecast
-    ? ` Workload forecast: ${percent(activeForecast.expectedUsagePercent)}% expected usage; effective expected usage: ${percent(effectiveExpectedUsage)}%; reserve: ${percent(config.reservePercent)}%.`
+    ? ` Workload forecast: ${percent(activeForecast.expectedUsagePercent)}% expected usage; effective expected usage: ${percent(guards.expectedUsage)}%; reserve: ${percent(config.reservePercent)}%.`
     : '';
-  const requiredHeadroom = config.reservePercent + effectiveExpectedUsage;
-  const sameWindow = previous?.resetAt === usage.resetsAt;
-  const activePremium = sameWindow && previous.tier === 'premium';
-  const threshold = activePremium
-    ? config.minWeeklyRemainingPercent - config.hysteresisPercent
-    : config.minWeeklyRemainingPercent;
   const measuredPace = computePace({ usage, config, history, now, windowMinutes });
   // The debit is a one-time spend, so it lowers projected unused allowance without being extrapolated as a rate.
   const pace = measuredPace && debit > 0 ? { ...measuredPace, projectedUnusedPercent: measuredPace.projectedUnusedPercent - debit } : measuredPace;
 
-  if (remaining < requiredHeadroom) return fallback(`Weekly allowance cannot cover the ${activeForecast ? 'workload forecast and ' : ''}configured session budget and reserve.${forecastReason}`, remaining, minutesUntilReset, pace);
+  if (remaining < guards.requiredHeadroom) return fallback(`Weekly allowance cannot cover the ${activeForecast ? 'workload forecast and ' : ''}configured session budget and reserve.${forecastReason}`, remaining, minutesUntilReset, pace);
   if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback(`Session-window allowance is below the configured headroom.${forecastReason}`, remaining, minutesUntilReset, pace);
-  if (remaining < threshold) return fallback(`Weekly allowance is below the premium threshold.${forecastReason}`, remaining, minutesUntilReset, pace);
+  if (remaining < guards.weeklyFloor) return fallback(`Weekly allowance is below the premium threshold.${forecastReason}`, remaining, minutesUntilReset, pace);
 
   const strategy = config.strategy ?? 'pace';
   let reason: string;
   if (strategy === 'pace' && pace) {
-    const margin = Math.max(0, paceSettings(config, usage.provider).margin - (activePremium ? config.hysteresisPercent : 0));
-    if (pace.projectedUnusedPercent < config.reservePercent + margin) {
+    if (pace.projectedUnusedPercent < guards.paceGuard) {
       return fallback(`On pace to leave only ~${percent(pace.projectedUnusedPercent)}% unused at reset; staying on default.${forecastReason}`, remaining, minutesUntilReset, pace);
     }
     reason = `On pace to leave ~${percent(pace.projectedUnusedPercent)}% unused at reset; premium fits.${forecastReason}`;

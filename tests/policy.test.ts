@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decide } from '../src/core/policy.js';
+import { decide, policyGuards } from '../src/core/policy.js';
 import { defaultConfig } from '../src/core/files.js';
 import type { ProviderState, UsageSnapshot, WorkloadForecast } from '../src/core/types.js';
 
@@ -45,6 +45,25 @@ describe('weekly upgrade policy', () => {
     const atBand = { ...usage, weeklyUsedPercent: 78 };
     expect(decide({ usage: atBand, config: nearReset, previous, now }).tier).toBe('premium');
     expect(decide({ usage: atBand, config, previous: { ...previous, resetAt: '2026-10-06T12:00:00.000Z' }, now }).tier).toBe('default');
+  });
+
+  it('excludes expired forecasts and hysteresis from displayed guards at reset', () => {
+    const expired = { ...usage, resetsAt: now.toISOString() };
+    const forecast: WorkloadForecast = {
+      provider: 'claude', resetAt: expired.resetsAt, expectedUsagePercent: 40,
+      source: 'explicit', setAt: now.toISOString(), identityHash: 'account-a',
+    };
+    const previous: ProviderState = { tier: 'premium', resetAt: expired.resetsAt, observedAt: usage.observedAt };
+    const guards = policyGuards({ config, usage: expired, previous, forecast, now });
+    expect(guards.activeForecast).toBeUndefined();
+    expect(guards.weeklyFloor).toBe(25);
+    expect(guards.weeklyGuard).toBe(25);
+
+    const live = { ...expired, resetsAt: new Date(now.getTime() + 1).toISOString() };
+    const liveGuards = policyGuards({ config, usage: live, previous: { ...previous, resetAt: live.resetsAt }, forecast: { ...forecast, resetAt: live.resetsAt }, now });
+    expect(liveGuards.activeForecast).toBeDefined();
+    expect(liveGuards.weeklyFloor).toBe(20);
+    expect(liveGuards.weeklyGuard).toBe(45);
   });
 });
 

@@ -15,7 +15,7 @@ if (process.argv.includes('app-server')) {
       const now = Math.floor(Date.now() / 1000);
       const resetsAt = Number(process.env.SURPLUS_TEST_RESETS_AT ?? now + 3600);
       result = {
-        ordinaryUsageAllowed: true,
+        ordinaryUsageAllowed: process.env.SURPLUS_TEST_USAGE_ALLOWED !== 'false',
         rateLimitsByLimitId: { codex: { primary: {
           usedPercent: Number(process.env.SURPLUS_TEST_WEEKLY_USED), resetsAt, windowDurationMins: 10080,
         } } },

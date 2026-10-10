@@ -1,0 +1,117 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { main } from '../src/cli.js';
+import { defaultConfig, readConfig, saveForecast, saveState } from '../src/core/files.js';
+
+const homes: string[] = [];
+const savedEnv = new Map<string, string | undefined>();
+
+const useTempHome = async (): Promise<void> => {
+  const home = await mkdtemp(join(tmpdir(), 'surplus-reserve-'));
+  homes.push(home);
+  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'SURPLUS_CODEX_BIN', 'SURPLUS_TEST_WEEKLY_USED', 'SURPLUS_TEST_RESETS_AT', 'SURPLUS_TEST_EFFECTIVE_EFFORT', 'SURPLUS_TEST_USAGE_ALLOWED']) {
+    savedEnv.set(key, process.env[key]);
+  }
+  process.env.HOME = home;
+  process.env.XDG_CONFIG_HOME = join(home, 'config');
+  process.env.XDG_STATE_HOME = join(home, 'state');
+  process.env.SURPLUS_CODEX_BIN = join(process.cwd(), 'tests/fixtures/fake-codex.mjs');
+  process.env.SURPLUS_TEST_WEEKLY_USED = '75';
+  process.env.SURPLUS_TEST_RESETS_AT = String(Math.floor((Date.now() + 60 * 60_000) / 1_000));
+};
+
+const captureStatus = async (): Promise<string> => {
+  const output: string[] = [];
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => { output.push(String(chunk)); return true; });
+  try { await main(['status', 'codex']); } finally { write.mockRestore(); }
+  return output.join('');
+};
+
+afterEach(async () => {
+  for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  savedEnv.clear();
+});
+
+describe('persistent reserve CLI', () => {
+  it('saves a reserve without changing other preferences or the other provider', async () => {
+    await useTempHome();
+    await main(['configure', 'codex', '--effort', 'xhigh']);
+    await main(['configure', 'codex', '--premium', 'gpt-test', '--reserve', '12.5']);
+    const config = await readConfig();
+    expect(config.providers.codex).toMatchObject({ premiumModel: 'gpt-test', premiumEffort: 'xhigh', reservePercent: 12.5 });
+    expect(config.providers.claude).toEqual(defaultConfig.providers.claude);
+
+    await main(['configure', 'codex', '--reserve', '0']);
+    expect((await readConfig()).providers.codex).toMatchObject({ premiumModel: 'gpt-test', reservePercent: 0 });
+  });
+
+  it.each(['-1', '101', 'NaN', '1e2', '10%', ''])('rejects invalid reserve %s without changing config', async (value) => {
+    await useTempHome();
+    await expect(main(['configure', 'codex', '--reserve', value])).rejects.toThrow('Reserve must be a number from 0 to 100.');
+    expect(await readConfig()).toEqual(defaultConfig);
+  });
+
+  it.each([['--reserve'], ['--reserve', '--premium']])('rejects a missing or flag-like reserve operand: %s', async (...args) => {
+    await useTempHome();
+    await expect(main(['configure', 'codex', ...args])).rejects.toThrow('Reserve must be a number from 0 to 100.');
+    expect(await readConfig()).toEqual(defaultConfig);
+  });
+
+  it('rejects repeated flags without changing config', async () => {
+    await useTempHome();
+    await expect(main(['configure', 'codex', '--reserve', '10', '--reserve', '20'])).rejects.toThrow('Duplicate --reserve.');
+    expect(await readConfig()).toEqual(defaultConfig);
+  });
+
+  it('shows which weekly guard binds at the boundary', async () => {
+    await useTempHome();
+    await main(['configure', 'codex', '--reserve', '19']);
+    expect(await captureStatus()).toContain('Weekly guard: 25% remaining (25% weekly floor; 19% reserve + 5% expected usage).');
+
+    await main(['configure', 'codex', '--reserve', '21']);
+    expect(await captureStatus()).toContain('Weekly guard: 26% remaining (25% weekly floor; 21% reserve + 5% expected usage).');
+  });
+
+  it('shows the forecast and hysteresis guards for an existing premium window', async () => {
+    await useTempHome();
+    await main(['configure', 'codex', '--reserve', '17']);
+    const resetAt = new Date(Number(process.env.SURPLUS_TEST_RESETS_AT) * 1_000).toISOString();
+    await saveState('codex', { tier: 'premium', resetAt, observedAt: new Date().toISOString() });
+    await saveForecast({ provider: 'codex', resetAt, expectedUsagePercent: 30, source: 'explicit', setAt: new Date().toISOString() });
+
+    const output = await captureStatus();
+    expect(output).toContain('Weekly guard: 47% remaining (20% weekly floor');
+    expect(output).toContain('17% reserve + 30% expected usage');
+    expect(output).toContain('Pace guard: 22% projected unused (17% reserve + 5% margin).');
+    expect(output).toContain('Workload forecast: 30% expected usage before reset');
+  });
+
+  it('shows the configured floor when Codex cannot apply a premium upgrade', async () => {
+    await useTempHome();
+    process.env.SURPLUS_TEST_EFFECTIVE_EFFORT = 'xhigh';
+    const output = await captureStatus();
+    expect(output).toContain('Weekly guard: 25% remaining (25% weekly floor; 5% reserve + 5% expected usage).');
+    expect(output).toContain('Premium target: no supported upgrade from the current Codex model and effort; automatic routing is disabled.');
+    expect(output).not.toContain('101%');
+  });
+
+  it('does not apply forecast or hysteresis guards when provider usage is disallowed', async () => {
+    await useTempHome();
+    process.env.SURPLUS_TEST_USAGE_ALLOWED = 'false';
+    const resetAt = new Date(Number(process.env.SURPLUS_TEST_RESETS_AT) * 1_000).toISOString();
+    await saveState('codex', { tier: 'premium', resetAt, observedAt: new Date().toISOString() });
+    await saveForecast({ provider: 'codex', resetAt, expectedUsagePercent: 40, source: 'explicit', setAt: new Date().toISOString() });
+
+    const output = await captureStatus();
+    expect(output).toContain('Configured weekly guard: 25% remaining (25% weekly floor; 5% reserve + 5% expected usage). Not applied: current telemetry is unavailable.');
+    expect(output).toContain('current telemetry unavailable');
+    expect(output).not.toContain('40% expected usage before reset');
+    expect(output).not.toContain('after 5% hysteresis');
+  });
+});
