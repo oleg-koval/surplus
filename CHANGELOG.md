@@ -1,3 +1,10 @@
+# [0.6.0](https://github.com/oleg-koval/surplus/compare/v0.5.1...v0.6.0) (2026-10-10)
+
+
+### ✨ Features
+
+* expose persistent reserve in CLI and status ([#20](https://github.com/oleg-koval/surplus/issues/20)) ([fc8b1f8](https://github.com/oleg-koval/surplus/commit/fc8b1f8843f0c92a50514b1df3ba12a121d55c60))
+
 ## [0.5.1](https://github.com/oleg-koval/surplus/compare/v0.5.0...v0.5.1) (2026-10-10)
 
 
