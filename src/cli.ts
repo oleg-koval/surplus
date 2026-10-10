@@ -5,7 +5,7 @@ import { runAutoUpdate, scheduleAutoUpdate } from './core/auto-update.js';
 import { constants as osConstants } from 'node:os';
 import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
 import { pendingDebitPercent, recordLaunchDebit, releaseLaunchDebit } from './core/debit.js';
-import { decide } from './core/policy.js';
+import { decide, policyGuards } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
 import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readLaunchDebit, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig, updateIntegrations, updateLaunchDebit, withLaunchDebit } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
@@ -28,7 +28,7 @@ Usage:
   surplus status [claude|codex|hermes|pi]
   surplus forecast <claude|codex> <0-100|status|clear>
   surplus run <claude|codex|hermes|pi> [provider arguments...]
-  surplus configure <claude|codex> [--premium MODEL] [--effort LEVEL]
+  surplus configure <claude|codex> [--premium MODEL] [--effort LEVEL] [--reserve PERCENT]
   surplus configure hermes --premium MODEL [--effort LEVEL]
   surplus configure pi --source <claude|codex> --premium MODEL [--effort LEVEL]
   surplus configure features [--session-notice on|off] [--prompt-nudge on|off] [--statusline-segment on|off]
@@ -208,7 +208,7 @@ const releaseReservation = async (reservation: LaunchReservation | undefined): P
  * Returns a routing decision with available usage, premium effort, and Claude identity metadata.
  * Performs filesystem and provider-process IO; unavailable telemetry produces a default decision, while configuration, path-resolution, and uncaught provider errors reject.
  */
-const prepare = async (provider: Provider, reserve = false): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string; reservation?: LaunchReservation }> => {
+const prepare = async (provider: Provider, reserve = false): Promise<{ decision: ReturnType<typeof decide>; guards: ReturnType<typeof policyGuards>; config: ProviderConfig; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string; reservation?: LaunchReservation }> => {
   const config = await readConfig();
   const providerConfig = configured(config, provider);
   const previous = await readState(provider);
@@ -219,7 +219,8 @@ const prepare = async (provider: Provider, reserve = false): Promise<{ decision:
     const usage = claude.usage;
     const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
     const { decision, reservation } = await decideClaudeWithDebit({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) }, providerConfig.premiumLaunchDebitPercent ?? 0, reserve);
-    return { decision, ...(reservation ? { reservation } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
+    const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
+    return { decision, guards, config: providerConfig, ...(reservation ? { reservation } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
   const discovery = await discoverCodex();
@@ -227,7 +228,8 @@ const prepare = async (provider: Provider, reserve = false): Promise<{ decision:
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
   const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
   const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
-  return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
+  const guards = policyGuards({ config: effectiveConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
+  return { decision, guards, config: effectiveConfig, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
 /**
@@ -277,6 +279,13 @@ const status = async (provider: Provider): Promise<void> => {
     try { await saveUsage(result.usage); } catch { /* Status telemetry cache is best-effort. */ }
   }
   showDecision(result.decision);
+  const { guards, config } = result;
+  const floor = `${String(guards.weeklyFloor)}% weekly floor${guards.activePremium ? ` after ${String(config.hysteresisPercent)}% hysteresis` : ''}`;
+  const budget = `${String(config.reservePercent)}% reserve + ${String(guards.expectedUsage)}% expected usage`;
+  process.stdout.write(`Weekly guard: ${String(guards.weeklyGuard)}% remaining (${floor}; ${budget}).\n`);
+  if (config.strategy !== 'near-reset' && result.decision.pace) {
+    process.stdout.write(`Pace guard: ${String(guards.paceGuard)}% projected unused (${String(config.reservePercent)}% reserve + ${String(guards.paceMargin)}% margin).\n`);
+  }
   if (!result.forecast) return;
   if (Date.parse(result.forecast.resetAt) <= Date.now()) {
     process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
@@ -284,6 +293,8 @@ const status = async (provider: Provider): Promise<void> => {
     process.stdout.write(`Workload forecast: ${String(result.forecast.expectedUsagePercent)}% expected usage for reset ${result.forecast.resetAt}; current telemetry unavailable.\n`);
   } else if (result.forecast.resetAt !== result.usage.resetsAt) {
     process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
+  } else if (!guards.activeForecast) {
+    process.stdout.write('Workload forecast: account does not match the current usage window; ignored.\n');
   } else {
     process.stdout.write(`Workload forecast: ${String(result.forecast.expectedUsagePercent)}% expected usage before reset (source: ${result.forecast.source}).\n`);
   }
@@ -448,7 +459,7 @@ const forecast = async (provider: Provider, args: string[]): Promise<void> => {
 };
 
 /**
- * Persists provider preferences from --premium and --effort argument pairs while retaining existing feature settings.
+ * Persists provider preferences from --premium, --effort, and --reserve argument pairs while retaining existing feature settings.
  * Performs filesystem IO and writes a confirmation; invalid arguments and configuration read, validation, or write failures reject.
  */
 const configure = async (provider: Provider, args: string[]): Promise<void> => {
@@ -456,15 +467,21 @@ const configure = async (provider: Provider, args: string[]): Promise<void> => {
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
     const value = args[index + 1];
-    if (!value || !['--premium', '--effort'].includes(flag ?? '')) throw new Error('Use --premium MODEL or --effort LEVEL.');
+    if (!value || !['--premium', '--effort', '--reserve'].includes(flag ?? '')) throw new Error('Use --premium MODEL, --effort LEVEL, or --reserve PERCENT.');
     next[flag ?? ''] = value;
     index += 1;
+  }
+  const reserve = next['--reserve'];
+  const reservePercent = reserve === undefined ? undefined : Number(reserve);
+  if (reservePercent !== undefined && (!/^\d+(?:\.\d+)?$/.test(reserve ?? '') || !Number.isFinite(reservePercent) || reservePercent < 0 || reservePercent > 100)) {
+    throw new Error('Reserve must be a number from 0 to 100.');
   }
   await updateConfig((latest) => {
     const latestUpdated: ProviderConfig = {
       ...configured(latest, provider),
       ...(next['--premium'] ? { premiumModel: next['--premium'] } : {}),
       ...(next['--effort'] ? { premiumEffort: next['--effort'] } : {}),
+      ...(reservePercent !== undefined ? { reservePercent } : {}),
     };
     return { ...latest, providers: { ...latest.providers, [provider]: latestUpdated } };
   });
