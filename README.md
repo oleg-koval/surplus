@@ -1,5 +1,11 @@
 # Surplus
 
+[![npm version](https://img.shields.io/npm/v/surplus-cli)](https://www.npmjs.com/package/surplus-cli)
+[![CI](https://img.shields.io/github/actions/workflow/status/oleg-koval/surplus/ci.yml?branch=main&label=CI)](https://github.com/oleg-koval/surplus/actions/workflows/ci.yml)
+[![npm downloads](https://img.shields.io/npm/dm/surplus-cli)](https://www.npmjs.com/package/surplus-cli)
+[![node](https://img.shields.io/node/v/surplus-cli)](https://nodejs.org)
+[![license](https://img.shields.io/github/license/oleg-koval/surplus)](LICENSE)
+
 Surplus watches the included usage windows exposed by Claude Code and Codex CLI. When your usage pace says part of the weekly allowance would otherwise go unused, it can start a new interactive session with a model or reasoning level you choose. It also supports Hermes Agent and Pi when configured for a Claude or Codex subscription.
 
 ## Install
