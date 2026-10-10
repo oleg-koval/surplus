@@ -1,3 +1,13 @@
+## Unreleased
+
+### ✨ Features
+
+* Claude launches routed to the premium model now add an estimated per-launch debit (`premiumLaunchDebitPercent`, default 1, 0 disables) to the cached weekly reading until the next statusline sample, limiting burst overshoot.
+
+### 🐛 Bug Fixes
+
+* `surplus forecast claude <N>` now explains that only a running Claude session's statusline saves a reading when none exists, instead of pointing at `surplus status claude`.
+
 ## [0.4.3](https://github.com/oleg-koval/surplus/compare/v0.4.2...v0.4.3) (2026-10-10)
 
 

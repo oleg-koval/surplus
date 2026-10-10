@@ -4,9 +4,10 @@ import { basename } from 'node:path';
 import { runAutoUpdate, scheduleAutoUpdate } from './core/auto-update.js';
 import { constants as osConstants } from 'node:os';
 import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
+import { applyLaunchDebit, recordLaunchDebit } from './core/debit.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig, updateIntegrations } from './core/files.js';
+import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readLaunchDebit, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig, updateIntegrations, updateLaunchDebit } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
 import { runHook } from './hook.js';
 import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
@@ -173,7 +174,7 @@ const getClaudeUsage = async (): Promise<{ readonly usage?: UsageSnapshot; reado
  * Returns a routing decision with available usage, premium effort, and Claude identity metadata.
  * Performs filesystem and provider-process IO; unavailable telemetry produces a default decision, while configuration, path-resolution, and uncaught provider errors reject.
  */
-const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string }> => {
+const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string; launchDebitPercent?: number }> => {
   const config = await readConfig();
   const providerConfig = configured(config, provider);
   const previous = await readState(provider);
@@ -181,10 +182,10 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
   const forecast = await readForecast(provider);
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
-    const usage = claude.usage;
+    const usage = claude.usage ? applyLaunchDebit(claude.usage, await readLaunchDebit('claude')) : undefined;
     const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
     const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
-    return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
+    return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}), launchDebitPercent: providerConfig.premiumLaunchDebitPercent ?? 0 };
   }
 
   const discovery = await discoverCodex();
@@ -223,6 +224,11 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
   const childEnv = routedChildEnvironment(provider, result.identityHash, result.decision.tier);
   const onStarted = async (): Promise<void> => {
     try { await saveState(provider, { tier: result.decision.tier, resetAt: result.usage?.resetsAt ?? '', observedAt: new Date().toISOString() }); } catch { /* Local routing state never controls provider launch or exit status. */ }
+    if (provider === 'claude' && result.decision.tier === 'premium' && result.usage) {
+      const sample = result.usage;
+      const perLaunch = result.launchDebitPercent ?? 0;
+      try { await updateLaunchDebit('claude', (latest) => recordLaunchDebit(sample, latest, perLaunch)); } catch { /* The debit is a best-effort estimate and never controls launch. */ }
+    }
     if (provider === 'claude' && result.identityHash) {
       try { await saveClaudeIdentity(result.identityHash); } catch { /* Account binding remains best-effort local state. */ }
     }
@@ -354,6 +360,14 @@ const configureIntegration = async (integration: Integration, args: string[]): P
   process.stdout.write(`Saved ${integration} preferences in the private Surplus config.\n`);
 };
 
+/**
+ * Purely explains how to obtain a saved usage reading for the provider.
+ * Claude readings come only from a running session's statusline; Codex readings are saved by `surplus status codex`.
+ */
+export const noResetWindowMessage = (provider: Provider): string => provider === 'claude'
+  ? 'No current reset window is available for claude. `surplus status claude` cannot capture a reading; only a running Claude session with the Surplus statusline installed saves one. Start a Claude session, wait for the statusline to save a reading, then retry.'
+  : `No current reset window is available. Run surplus status ${provider} first.`;
+
 const forecast = async (provider: Provider, args: string[]): Promise<void> => {
   if (args.length !== 1) throw new Error('Use surplus forecast <claude|codex> <0-100|status|clear>.');
   const action = args[0] ?? '';
@@ -379,7 +393,7 @@ const forecast = async (provider: Provider, args: string[]): Promise<void> => {
   }
   const usage = await readUsage(provider);
   if (!usage || !Number.isFinite(Date.parse(usage.resetsAt)) || Date.parse(usage.resetsAt) <= Date.now()) {
-    throw new Error(`No current reset window is available. Run surplus status ${provider} first.`);
+    throw new Error(noResetWindowMessage(provider));
   }
   const next: WorkloadForecast = {
     provider,

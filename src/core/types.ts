@@ -52,6 +52,8 @@ export interface ProviderConfig {
   readonly premiumBurnMultiplier?: number;
   readonly paceMarginPercent?: number;
   readonly minPaceElapsedMinutes?: number;
+  /** Weekly percent assumed spent by each premium-routed launch until the next usage sample; 0 disables. Claude only. */
+  readonly premiumLaunchDebitPercent?: number;
 }
 
 export interface SurplusConfig {
@@ -69,6 +71,14 @@ export interface WorkloadForecast {
   readonly setAt: string;
   /** Claude forecasts are bound to the account identity that produced the usage window. */
   readonly identityHash?: string;
+}
+
+/** Estimated weekly percent spent by premium launches since the cached sample it is bound to. */
+export interface LaunchDebit {
+  readonly resetsAt: string;
+  readonly observedAt: string;
+  readonly identityHash?: string;
+  readonly percent: number;
 }
 
 export interface ProviderState {

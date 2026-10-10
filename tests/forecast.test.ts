@@ -105,4 +105,17 @@ describe('forecast CLI', () => {
     try { await main(['forecast', 'claude', 'status']); } finally { write.mockRestore(); }
     expect(output.join('')).toMatch(/expired with the previous reset window/);
   });
+
+  it('explains that Claude readings only come from a running session statusline', async () => {
+    await useTempHome();
+    const error = await main(['forecast', 'claude', '20']).catch((caught: unknown) => caught as Error);
+    expect(error.message).toMatch(/cannot capture a reading/);
+    expect(error.message).toMatch(/statusline/);
+    expect(error.message).not.toMatch(/Run surplus status claude first/);
+  });
+
+  it('points Codex at surplus status when no reading is saved', async () => {
+    await useTempHome();
+    await expect(main(['forecast', 'codex', '20'])).rejects.toThrow('Run surplus status codex first.');
+  });
 });
