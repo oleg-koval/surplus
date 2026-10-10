@@ -32,14 +32,16 @@ export const policyGuards = (input: {
   readonly usage?: UsageSnapshot;
   readonly previous?: ProviderState;
   readonly forecast?: WorkloadForecast;
+  readonly now?: Date;
 }): PolicyGuards => {
-  const { config, usage, previous, forecast } = input;
-  const activeForecast = usage && forecast?.provider === usage.provider && forecast.resetAt === usage.resetsAt
+  const { config, usage, previous, forecast, now = new Date() } = input;
+  const currentWindow = usage && Date.parse(usage.resetsAt) > now.getTime();
+  const activeForecast = currentWindow && forecast?.provider === usage.provider && forecast.resetAt === usage.resetsAt
     && (usage.provider === 'codex' || (typeof usage.identityHash === 'string' && forecast.identityHash === usage.identityHash))
     && Number.isFinite(forecast.expectedUsagePercent) && forecast.expectedUsagePercent >= 0 && forecast.expectedUsagePercent <= 100
     ? forecast : undefined;
   const expectedUsage = Math.max(config.expectedUsageUntilResetPercent, activeForecast?.expectedUsagePercent ?? 0);
-  const activePremium = Boolean(usage && previous?.resetAt === usage.resetsAt && previous.tier === 'premium');
+  const activePremium = Boolean(currentWindow && previous?.resetAt === usage.resetsAt && previous.tier === 'premium');
   const weeklyFloor = config.minWeeklyRemainingPercent - (activePremium ? config.hysteresisPercent : 0);
   const paceMargin = Math.max(0, paceSettings(config, usage?.provider ?? 'claude').margin - (activePremium ? config.hysteresisPercent : 0));
   return {
@@ -138,7 +140,7 @@ export const decide = (input: {
   const remaining = Math.max(0, 100 - usage.weeklyUsedPercent - debit);
   const sessionRemaining = typeof sessionUsed === 'number' ? 100 - sessionUsed : 100;
   const minutesUntilReset = Math.floor((reset - now.getTime()) / 60_000);
-  const guards = policyGuards({ config, usage, ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
+  const guards = policyGuards({ config, usage, ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
   const { activeForecast, activePremium } = guards;
   const forecastReason = activeForecast
     ? ` Workload forecast: ${percent(activeForecast.expectedUsagePercent)}% expected usage; effective expected usage: ${percent(guards.expectedUsage)}%; reserve: ${percent(config.reservePercent)}%.`

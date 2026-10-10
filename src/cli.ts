@@ -217,16 +217,18 @@ const prepare = async (provider: Provider, reserve = false): Promise<{ decision:
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
     const usage = claude.usage;
-    const { decision, reservation } = await decideClaudeWithDebit({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) }, providerConfig.premiumLaunchDebitPercent ?? 0, reserve);
-    const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
+    const now = new Date();
+    const { decision, reservation } = await decideClaudeWithDebit({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}), now }, providerConfig.premiumLaunchDebitPercent ?? 0, reserve);
+    const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
     return { decision, guards, config: providerConfig, ...(reservation ? { reservation } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
   const discovery = await discoverCodex();
   const usage = discovery?.usage;
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
-  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) });
-  const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
+  const now = new Date();
+  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}), now });
+  const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
   return { decision, guards, config: providerConfig, ...(effectiveConfig.minWeeklyRemainingPercent > 100 ? { premiumTargetUnavailable: true } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
