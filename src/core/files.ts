@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import type { Features, Integration, IntegrationConfig, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
+import type { Features, Integration, IntegrationConfig, LaunchDebit, Provider, ProviderConfig, ProviderState, SurplusConfig, UsageSample, UsageSnapshot, WorkloadForecast } from './types.js';
 import { surplusDataDirectory, xdgDirectory } from './xdg.js';
 
 export const dataDir = (): string => surplusDataDirectory();
@@ -11,6 +11,7 @@ const usagePath = (provider: Provider): string => join(dataDir(), `${provider}-u
 const statePath = (provider: Provider): string => join(dataDir(), `${provider}-state.json`);
 const historyPath = (provider: Provider): string => join(dataDir(), `${provider}-usage-history.json`);
 const forecastPath = (provider: Provider): string => join(dataDir(), `${provider}-forecast.json`);
+const debitPath = (provider: Provider): string => join(dataDir(), `${provider}-launch-debit.json`);
 const hookSessionsPath = (): string => join(dataDir(), 'hook-sessions.json');
 const claudeIdentityPath = (): string => join(dataDir(), 'claude-identity.json');
 
@@ -70,7 +71,8 @@ const isProviderConfig = (value: unknown): value is ProviderConfig => {
     && (row.strategy === undefined || row.strategy === 'pace' || row.strategy === 'near-reset')
     && (row.premiumBurnMultiplier === undefined || (typeof row.premiumBurnMultiplier === 'number' && row.premiumBurnMultiplier > 0))
     && (row.paceMarginPercent === undefined || (typeof row.paceMarginPercent === 'number' && row.paceMarginPercent >= 0 && row.paceMarginPercent <= 100))
-    && (row.minPaceElapsedMinutes === undefined || (typeof row.minPaceElapsedMinutes === 'number' && row.minPaceElapsedMinutes >= 0));
+    && (row.minPaceElapsedMinutes === undefined || (typeof row.minPaceElapsedMinutes === 'number' && row.minPaceElapsedMinutes >= 0))
+    && (row.premiumLaunchDebitPercent === undefined || (typeof row.premiumLaunchDebitPercent === 'number' && row.premiumLaunchDebitPercent >= 0 && row.premiumLaunchDebitPercent <= 100));
 };
 
 /**
@@ -125,6 +127,7 @@ const withPaceDefaults = (provider: Provider, saved: ProviderConfig): ProviderCo
     premiumBurnMultiplier: saved.premiumBurnMultiplier ?? defaults.premiumBurnMultiplier ?? 1.5,
     paceMarginPercent: saved.paceMarginPercent ?? defaults.paceMarginPercent ?? 10,
     minPaceElapsedMinutes: saved.minPaceElapsedMinutes ?? defaults.minPaceElapsedMinutes ?? 1440,
+    premiumLaunchDebitPercent: saved.premiumLaunchDebitPercent ?? defaults.premiumLaunchDebitPercent ?? 0,
   };
 };
 
@@ -291,6 +294,35 @@ export const saveHookSession = async (sessionId: string, record: HookSessionReco
 export const readUsage = (provider: Provider): Promise<UsageSnapshot | undefined> => readJson<UsageSnapshot>(usagePath(provider));
 export const readState = (provider: Provider): Promise<ProviderState | undefined> => readJson<ProviderState>(statePath(provider));
 export const saveState = (provider: Provider, state: ProviderState): Promise<void> => atomicJson(statePath(provider), state);
+const isLaunchDebit = (value: unknown): value is LaunchDebit => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.resetsAt === 'string' && typeof row.observedAt === 'string'
+    && (row.identityHash === undefined || typeof row.identityHash === 'string')
+    && typeof row.percent === 'number' && Number.isFinite(row.percent) && row.percent >= 0 && row.percent <= 100;
+};
+
+/** Reads the provider's pending launch debit, ignoring malformed state so routing can fail safe. */
+export const readLaunchDebit = (provider: Provider): Promise<LaunchDebit | undefined> =>
+  readJson<unknown>(debitPath(provider)).then((saved) => isLaunchDebit(saved) ? saved : undefined);
+
+/**
+ * Runs the update on the provider's launch debit under its file lock, persisting the debit it returns (or removing the file for undefined), and resolves to the update's result.
+ * Performs filesystem IO and rejects on lock or write failures, including when the lock is not free within its short wait.
+ */
+export const withLaunchDebit = async <T>(provider: Provider, update: (latest: LaunchDebit | undefined) => { readonly next: LaunchDebit | undefined; readonly result: T }): Promise<T> =>
+  withFileLock(debitPath(provider), async () => {
+    const latest = await readLaunchDebit(provider);
+    const { next, result } = update(latest);
+    if (next === latest) return result;
+    if (next) await atomicJson(debitPath(provider), next);
+    else await unlink(debitPath(provider)).catch((error: unknown) => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
+    return result;
+  });
+
+/** Replaces the provider's launch debit with the result of update, or removes it when update returns undefined. */
+export const updateLaunchDebit = async (provider: Provider, update: (latest: LaunchDebit | undefined) => LaunchDebit | undefined): Promise<void> =>
+  withLaunchDebit(provider, (latest) => ({ next: update(latest), result: undefined }));
 export const readClaudeIdentity = async (): Promise<string | undefined> => (await readJson<{ identityHash?: string }>(claudeIdentityPath()))?.identityHash;
 export const saveClaudeIdentity = (identityHash: string | undefined, now = new Date()): Promise<void> => atomicJson(claudeIdentityPath(), { identityHash, checkedAt: now.toISOString() });
 /** Returns the saved identity only when it was resolved within maxAgeMs, so callers can skip spawning `claude auth status`. */
@@ -309,14 +341,14 @@ export const defaultConfig: SurplusConfig = {
       premiumModel: 'opus', minWeeklyRemainingPercent: 25,
       reservePercent: 5, expectedUsageUntilResetPercent: 5, minSessionRemainingPercent: 25, nearResetMinutes: 2880,
       maxTelemetryAgeMinutes: 120, hysteresisPercent: 5,
-      strategy: 'pace', premiumBurnMultiplier: 1.5, paceMarginPercent: 10, minPaceElapsedMinutes: 1440,
+      strategy: 'pace', premiumBurnMultiplier: 1.5, paceMarginPercent: 10, minPaceElapsedMinutes: 1440, premiumLaunchDebitPercent: 1,
     },
     codex: {
       premiumModel: 'auto', premiumEffort: 'high',
       minWeeklyRemainingPercent: 25, reservePercent: 5, expectedUsageUntilResetPercent: 5,
       minSessionRemainingPercent: 25,
       nearResetMinutes: 2880, maxTelemetryAgeMinutes: 5, hysteresisPercent: 5,
-      strategy: 'pace', premiumBurnMultiplier: 1.3, paceMarginPercent: 10, minPaceElapsedMinutes: 1440,
+      strategy: 'pace', premiumBurnMultiplier: 1.3, paceMarginPercent: 10, minPaceElapsedMinutes: 1440, premiumLaunchDebitPercent: 0,
     },
   },
 };
