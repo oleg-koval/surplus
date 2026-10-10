@@ -4,10 +4,10 @@ import { basename } from 'node:path';
 import { runAutoUpdate, scheduleAutoUpdate } from './core/auto-update.js';
 import { constants as osConstants } from 'node:os';
 import type { Client, Decision, Features, Integration, Provider, ProviderConfig, UsageSnapshot, WorkloadForecast } from './core/types.js';
-import { applyLaunchDebit, recordLaunchDebit } from './core/debit.js';
+import { pendingDebitPercent, recordLaunchDebit, releaseLaunchDebit } from './core/debit.js';
 import { decide } from './core/policy.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
-import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readLaunchDebit, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig, updateIntegrations, updateLaunchDebit } from './core/files.js';
+import { clearForecast, defaultConfig, defaultFeatures, readClaudeIdentity, readConfig, readForecast, readFreshClaudeIdentity, readLaunchDebit, readState, readUsage, readUsageHistory, saveClaudeIdentity, saveForecast, saveState, saveUsage, updateConfig, updateIntegrations, updateLaunchDebit, withLaunchDebit } from './core/files.js';
 import { statuslineSegment, withSegment } from './core/notice.js';
 import { runHook } from './hook.js';
 import { restoreHooks, syncHooks, uninstallHooks } from './install/hooks.js';
@@ -170,11 +170,45 @@ const getClaudeUsage = async (): Promise<{ readonly usage?: UsageSnapshot; reado
   };
 };
 
+/** A launch debit held for one premium Claude launch, so a failed start can give it back. */
+interface LaunchReservation { readonly usage: UsageSnapshot; readonly percent: number }
+
+type DecisionInput = Parameters<typeof decide>[0];
+
+/**
+ * Decides for a Claude cached sample with its pending launch debit held back as a one-off amount.
+ * With reserve set, reading the debit, deciding, and recording this launch's debit when premium happen in one locked section, so concurrent launches on one sample cannot all decide before any debit lands.
+ * If the lock is unavailable the decision uses the unlocked debit and reserves nothing. Performs filesystem IO.
+ */
+const decideClaudeWithDebit = async (input: DecisionInput, perLaunchPercent: number, reserve: boolean): Promise<{ readonly decision: Decision; readonly reservation?: LaunchReservation }> => {
+  const { usage } = input;
+  const decideWith = (debit: Parameters<typeof pendingDebitPercent>[1]): Decision => decide({ ...input, pendingDebitPercent: pendingDebitPercent(usage, debit, perLaunchPercent) });
+  if (!usage) return { decision: decideWith(undefined) };
+  if (reserve) {
+    try {
+      return await withLaunchDebit('claude', (latest) => {
+        const decision = decideWith(latest);
+        const reserved = decision.tier === 'premium' && perLaunchPercent > 0;
+        // With the debit disabled, any stored amount is stale: drop it when it belongs to this sample.
+        const next = reserved ? recordLaunchDebit(usage, latest, perLaunchPercent) : perLaunchPercent > 0 ? latest : undefined;
+        return { next, result: { decision, ...(reserved ? { reservation: { usage, percent: perLaunchPercent } } : {}) } };
+      });
+    } catch { /* Fall through: a busy lock or failed write only loses the estimate. */ }
+  }
+  return { decision: decideWith(await readLaunchDebit('claude').catch(() => undefined)) };
+};
+
+/** Gives back a launch's debit when the provider never started; a failed write is ignored because the debit is only an estimate. */
+const releaseReservation = async (reservation: LaunchReservation | undefined): Promise<void> => {
+  if (!reservation) return;
+  try { await updateLaunchDebit('claude', (latest) => releaseLaunchDebit(reservation.usage, latest, reservation.percent)); } catch { /* Best-effort estimate. */ }
+};
+
 /**
  * Returns a routing decision with available usage, premium effort, and Claude identity metadata.
  * Performs filesystem and provider-process IO; unavailable telemetry produces a default decision, while configuration, path-resolution, and uncaught provider errors reject.
  */
-const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string; launchDebitPercent?: number }> => {
+const prepare = async (provider: Provider, reserve = false): Promise<{ decision: ReturnType<typeof decide>; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string; reservation?: LaunchReservation }> => {
   const config = await readConfig();
   const providerConfig = configured(config, provider);
   const previous = await readState(provider);
@@ -182,10 +216,10 @@ const prepare = async (provider: Provider): Promise<{ decision: ReturnType<typeo
   const forecast = await readForecast(provider);
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
-    const usage = claude.usage ? applyLaunchDebit(claude.usage, await readLaunchDebit('claude')) : undefined;
+    const usage = claude.usage;
     const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
-    const decision = decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
-    return { decision, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}), launchDebitPercent: providerConfig.premiumLaunchDebitPercent ?? 0 };
+    const { decision, reservation } = await decideClaudeWithDebit({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) }, providerConfig.premiumLaunchDebitPercent ?? 0, reserve);
+    return { decision, ...(reservation ? { reservation } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
   const discovery = await discoverCodex();
@@ -211,7 +245,7 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
     return;
   }
   let result: Awaited<ReturnType<typeof prepare>>;
-  try { result = await prepare(provider); } catch {
+  try { result = await prepare(provider, true); } catch {
     process.exitCode = await launchProvider(provider, args);
     return;
   }
@@ -224,11 +258,6 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
   const childEnv = routedChildEnvironment(provider, result.identityHash, result.decision.tier);
   const onStarted = async (): Promise<void> => {
     try { await saveState(provider, { tier: result.decision.tier, resetAt: result.usage?.resetsAt ?? '', observedAt: new Date().toISOString() }); } catch { /* Local routing state never controls provider launch or exit status. */ }
-    if (provider === 'claude' && result.decision.tier === 'premium' && result.usage) {
-      const sample = result.usage;
-      const perLaunch = result.launchDebitPercent ?? 0;
-      try { await updateLaunchDebit('claude', (latest) => recordLaunchDebit(sample, latest, perLaunch)); } catch { /* The debit is a best-effort estimate and never controls launch. */ }
-    }
     if (provider === 'claude' && result.identityHash) {
       try { await saveClaudeIdentity(result.identityHash); } catch { /* Account binding remains best-effort local state. */ }
     }
@@ -236,7 +265,10 @@ const run = async (provider: Provider, args: string[]): Promise<void> => {
       try { await saveUsage(result.usage); } catch { /* Cached telemetry never controls provider launch or exit status. */ }
     }
   };
-  process.exitCode = await launchProvider(provider, selected, childEnv, onStarted);
+  try { process.exitCode = await launchProvider(provider, selected, childEnv, onStarted); } catch (error) {
+    await releaseReservation(result.reservation);
+    throw error;
+  }
 };
 
 const status = async (provider: Provider): Promise<void> => {
@@ -271,7 +303,7 @@ export const integrationLaunchArgs = (integration: Integration, args: readonly s
 };
 
 /** Uses the client's own quota view for Hermes and an explicitly shared subscription for Pi. */
-const prepareIntegration = async (integration: Integration): Promise<{ readonly decision: Decision; readonly source?: Provider; readonly effort?: string }> => {
+const prepareIntegration = async (integration: Integration, reserve = false): Promise<{ readonly decision: Decision; readonly source?: Provider; readonly effort?: string; readonly reservation?: LaunchReservation }> => {
   const config = await readConfig();
   const settings = config.integrations[integration];
   if (integration === 'hermes') {
@@ -300,8 +332,13 @@ const prepareIntegration = async (integration: Integration): Promise<{ readonly 
   const history = await readUsageHistory(source);
   const forecast = await readForecast(source);
   const providerConfig = { ...config.providers[source], premiumModel: target.premiumModel, premiumEffort: target.premiumEffort ?? '' };
+  const input: DecisionInput = { ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) };
+  if (source === 'claude') {
+    const { decision, reservation } = await decideClaudeWithDebit(input, config.providers.claude.premiumLaunchDebitPercent ?? 0, reserve);
+    return { decision, source, ...(reservation ? { reservation } : {}), ...(target.premiumEffort ? { effort: target.premiumEffort } : {}) };
+  }
   return {
-    decision: decide({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) }),
+    decision: decide(input),
     source, ...(target.premiumEffort ? { effort: target.premiumEffort } : {}),
   };
 };
@@ -313,7 +350,7 @@ const runIntegration = async (integration: Integration, args: string[]): Promise
     return;
   }
   let prepared: Awaited<ReturnType<typeof prepareIntegration>>;
-  try { prepared = await prepareIntegration(integration); } catch {
+  try { prepared = await prepareIntegration(integration, true); } catch {
     integrationDebug(integration, 'routing preparation failed; launching unchanged.');
     process.exitCode = await launchProvider(integration, args);
     return;
@@ -330,7 +367,10 @@ const runIntegration = async (integration: Integration, args: string[]): Promise
   showDecision(prepared.decision);
   const { source, effort } = prepared;
   const selected = integrationLaunchArgs(integration, args, prepared.decision.model, effort, source);
-  process.exitCode = await launchProvider(integration, selected, routedChildEnvironment(integration, undefined, 'premium'));
+  try { process.exitCode = await launchProvider(integration, selected, routedChildEnvironment(integration, undefined, 'premium')); } catch (error) {
+    await releaseReservation(prepared.reservation);
+    throw error;
+  }
 };
 
 const configureIntegration = async (integration: Integration, args: string[]): Promise<void> => {

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { applyLaunchDebit, recordLaunchDebit } from '../src/core/debit.js';
+import { pendingDebitPercent, recordLaunchDebit, releaseLaunchDebit } from '../src/core/debit.js';
 import { configPath, defaultConfig, readConfig, readLaunchDebit, updateLaunchDebit } from '../src/core/files.js';
 import { decide } from '../src/core/policy.js';
 import type { LaunchDebit, UsageSnapshot } from '../src/core/types.js';
@@ -15,11 +15,12 @@ const sample: UsageSnapshot = {
   sessionUsedPercent: 20, sessionResetsAt: new Date(now.getTime() + 4 * 60 * 60_000).toISOString(), usageAllowed: true, identityHash: 'account-a',
 };
 
-/** Launches once against the sample, mirroring prepare() then onStarted(); returns the decision and the new debit. */
+/** Launches once against the sample, mirroring the locked decide-then-record step; returns the decision and the new debit. */
 const launch = (usage: UsageSnapshot, debit: LaunchDebit | undefined, perLaunch = 1): { remaining: number | null; tier: string; debit: LaunchDebit | undefined } => {
-  const decision = decide({ usage: applyLaunchDebit(usage, debit), config, now });
+  const decision = decide({ usage, config, now, pendingDebitPercent: pendingDebitPercent(usage, debit, perLaunch) });
   return { remaining: decision.weeklyRemainingPercent, tier: decision.tier, debit: decision.tier === 'premium' ? recordLaunchDebit(usage, debit, perLaunch) : debit };
 };
+const debitFor = (usage: UsageSnapshot, percent: number): LaunchDebit => ({ resetsAt: usage.resetsAt, observedAt: usage.observedAt, ...(usage.identityHash ? { identityHash: usage.identityHash } : {}), percent });
 
 describe('premium launch debit', () => {
   it('defaults to one percent for Claude', () => {
@@ -43,37 +44,58 @@ describe('premium launch debit', () => {
     for (let i = 1; i < remaining.length; i += 1) expect(remaining[i]).toBeLessThan(remaining[i - 1] ?? 0);
   });
 
-  it('clamps the adjusted used percent at 100', () => {
-    const adjusted = applyLaunchDebit({ ...sample, weeklyUsedPercent: 99.5 }, { resetsAt: sample.resetsAt, observedAt: sample.observedAt, identityHash: 'account-a', percent: 5 });
-    expect(adjusted.weeklyUsedPercent).toBe(100);
+  it('subtracts the debit once from remaining and projected unused, without extrapolating it as a rate', () => {
+    const base = decide({ usage: sample, config, now });
+    const debited = decide({ usage: sample, config, now, pendingDebitPercent: 4 });
+    expect(debited.weeklyRemainingPercent).toBe((base.weeklyRemainingPercent ?? 0) - 4);
+    expect(debited.pace?.projectedUnusedPercent).toBeCloseTo((base.pace?.projectedUnusedPercent ?? 0) - 4, 9);
+    expect(debited.pace?.runsOutBeforeResetMinutes).toBe(base.pace?.runsOutBeforeResetMinutes);
+  });
+
+  it('never lets remaining go below zero', () => {
+    expect(decide({ usage: sample, config, now, pendingDebitPercent: 500 }).weeklyRemainingPercent).toBe(0);
   });
 
   it('is cleared by a newer sample', () => {
     const debit = recordLaunchDebit(sample, undefined, 3);
     const newer = { ...sample, observedAt: new Date(now.getTime() + 60_000).toISOString() };
-    expect(applyLaunchDebit(newer, debit)).toBe(newer);
+    expect(pendingDebitPercent(newer, debit, 1)).toBe(0);
     expect(recordLaunchDebit(newer, debit, 1)?.percent).toBe(1);
   });
 
   it('is cleared by a reset rollover', () => {
     const debit = recordLaunchDebit(sample, undefined, 3);
     const rolled = { ...sample, resetsAt: new Date(now.getTime() + 8 * 24 * 60 * 60_000).toISOString() };
-    expect(applyLaunchDebit(rolled, debit)).toBe(rolled);
+    expect(pendingDebitPercent(rolled, debit, 1)).toBe(0);
   });
 
   it('is cleared by a Claude identity change', () => {
     const debit = recordLaunchDebit(sample, undefined, 3);
-    const other = { ...sample, identityHash: 'account-b' };
-    expect(applyLaunchDebit(other, debit)).toBe(other);
-    expect(applyLaunchDebit({ ...sample, identityHash: undefined }, debit).weeklyUsedPercent).toBe(60);
+    expect(pendingDebitPercent({ ...sample, identityHash: 'account-b' }, debit, 1)).toBe(0);
+    expect(pendingDebitPercent({ ...sample, identityHash: undefined }, debit, 1)).toBe(0);
   });
 
-  it('records nothing when the per-launch amount is 0', () => {
+  it('keeps a debit bound to a newer sample when an older sample records', () => {
+    const newer = { ...sample, observedAt: new Date(now.getTime() + 60_000).toISOString() };
+    const stored = debitFor(newer, 3);
+    expect(recordLaunchDebit(sample, stored, 1)).toBe(stored);
+    const nextWindow = { ...sample, resetsAt: new Date(now.getTime() + 8 * 24 * 60 * 60_000).toISOString() };
+    const storedNext = debitFor(nextWindow, 2);
+    expect(recordLaunchDebit(sample, storedNext, 1)).toBe(storedNext);
+  });
+
+  it('ignores a stored debit and records nothing when the per-launch amount is 0', () => {
     expect(recordLaunchDebit(sample, undefined, 0)).toBeUndefined();
-    expect(applyLaunchDebit(sample, { resetsAt: sample.resetsAt, observedAt: sample.observedAt, identityHash: 'account-a', percent: 0 })).toBe(sample);
-    const step = launch(sample, undefined, 0);
-    expect(step.debit).toBeUndefined();
-    expect(launch(sample, step.debit, 0).remaining).toBe(step.remaining);
+    expect(pendingDebitPercent(sample, debitFor(sample, 7), 0)).toBe(0);
+    const step = launch(sample, debitFor(sample, 7), 0);
+    expect(step.remaining).toBe(decide({ usage: sample, config, now }).weeklyRemainingPercent);
+  });
+
+  it('releases one launch from the matching debit and leaves other samples alone', () => {
+    expect(releaseLaunchDebit(sample, debitFor(sample, 3), 1)?.percent).toBe(2);
+    expect(releaseLaunchDebit(sample, debitFor(sample, 1), 1)).toBeUndefined();
+    const other = debitFor({ ...sample, observedAt: new Date(now.getTime() + 60_000).toISOString() }, 3);
+    expect(releaseLaunchDebit(sample, other, 1)).toBe(other);
   });
 });
 

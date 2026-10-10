@@ -68,9 +68,12 @@ export const decide = (input: {
   readonly previous?: ProviderState;
   readonly history?: readonly UsageSample[];
   readonly forecast?: WorkloadForecast;
+  /** One-off weekly percent already spent by launches the cached sample does not yet include; it is not part of any burn rate. */
+  readonly pendingDebitPercent?: number;
   readonly now?: Date;
 }): Decision => {
-  const { usage, config, previous, history = [], forecast, now = new Date() } = input;
+  const { usage, config, previous, history = [], forecast, pendingDebitPercent = 0, now = new Date() } = input;
+  const debit = Number.isFinite(pendingDebitPercent) && pendingDebitPercent > 0 ? pendingDebitPercent : 0;
   const fallback = (reason: string, weeklyRemainingPercent: number | null = null, minutesUntilReset: number | null = null, pace?: Pace): Decision => ({
     tier: 'default', model: 'provider default', reason, weeklyRemainingPercent, minutesUntilReset, ...(pace ? { pace } : {}),
   });
@@ -97,7 +100,7 @@ export const decide = (input: {
     return fallback('The provider returned an invalid usage window duration.');
   }
 
-  const remaining = 100 - usage.weeklyUsedPercent;
+  const remaining = Math.max(0, 100 - usage.weeklyUsedPercent - debit);
   const sessionRemaining = typeof sessionUsed === 'number' ? 100 - sessionUsed : 100;
   const minutesUntilReset = Math.floor((reset - now.getTime()) / 60_000);
   const activeForecast = forecast?.provider === usage.provider && forecast.resetAt === usage.resetsAt
@@ -114,7 +117,9 @@ export const decide = (input: {
   const threshold = activePremium
     ? config.minWeeklyRemainingPercent - config.hysteresisPercent
     : config.minWeeklyRemainingPercent;
-  const pace = computePace({ usage, config, history, now, windowMinutes });
+  const measuredPace = computePace({ usage, config, history, now, windowMinutes });
+  // The debit is a one-time spend, so it lowers projected unused allowance without being extrapolated as a rate.
+  const pace = measuredPace && debit > 0 ? { ...measuredPace, projectedUnusedPercent: measuredPace.projectedUnusedPercent - debit } : measuredPace;
 
   if (remaining < requiredHeadroom) return fallback(`Weekly allowance cannot cover the ${activeForecast ? 'workload forecast and ' : ''}configured session budget and reserve.${forecastReason}`, remaining, minutesUntilReset, pace);
   if (usage.sessionWindow === 'available' && sessionRemaining < config.minSessionRemainingPercent) return fallback(`Session-window allowance is below the configured headroom.${forecastReason}`, remaining, minutesUntilReset, pace);

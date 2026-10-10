@@ -307,16 +307,22 @@ export const readLaunchDebit = (provider: Provider): Promise<LaunchDebit | undef
   readJson<unknown>(debitPath(provider)).then((saved) => isLaunchDebit(saved) ? saved : undefined);
 
 /**
- * Atomically replaces the provider's launch debit with the result of update, or removes it when update returns undefined.
- * Performs filesystem IO under a lock and rejects on lock or write failures.
+ * Runs the update on the provider's launch debit under its file lock, persisting the debit it returns (or removing the file for undefined), and resolves to the update's result.
+ * Performs filesystem IO and rejects on lock or write failures, including when the lock is not free within its short wait.
  */
-export const updateLaunchDebit = async (provider: Provider, update: (latest: LaunchDebit | undefined) => LaunchDebit | undefined): Promise<void> => {
-  await withFileLock(debitPath(provider), async () => {
-    const next = update(await readLaunchDebit(provider));
+export const withLaunchDebit = async <T>(provider: Provider, update: (latest: LaunchDebit | undefined) => { readonly next: LaunchDebit | undefined; readonly result: T }): Promise<T> =>
+  withFileLock(debitPath(provider), async () => {
+    const latest = await readLaunchDebit(provider);
+    const { next, result } = update(latest);
+    if (next === latest) return result;
     if (next) await atomicJson(debitPath(provider), next);
     else await unlink(debitPath(provider)).catch((error: unknown) => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
+    return result;
   });
-};
+
+/** Replaces the provider's launch debit with the result of update, or removes it when update returns undefined. */
+export const updateLaunchDebit = async (provider: Provider, update: (latest: LaunchDebit | undefined) => LaunchDebit | undefined): Promise<void> =>
+  withLaunchDebit(provider, (latest) => ({ next: update(latest), result: undefined }));
 export const readClaudeIdentity = async (): Promise<string | undefined> => (await readJson<{ identityHash?: string }>(claudeIdentityPath()))?.identityHash;
 export const saveClaudeIdentity = (identityHash: string | undefined, now = new Date()): Promise<void> => atomicJson(claudeIdentityPath(), { identityHash, checkedAt: now.toISOString() });
 /** Returns the saved identity only when it was resolved within maxAgeMs, so callers can skip spawning `claude auth status`. */
