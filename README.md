@@ -72,7 +72,7 @@ Codex may ask you to review/trust the new hook on first start. Codex 0.160 label
 surplus --version                    # installed package version; -v also works
 surplus status claude                 # latest captured sample and policy decision
 surplus status codex                  # fresh read-only Codex usage and decision
-surplus forecast claude 20            # reserve 20% expected usage until this reset
+surplus forecast claude 20            # matters only while premium is already active; use 30 to tighten the normal floor
 surplus forecast claude status        # inspect the saved forecast
 surplus forecast claude clear         # remove the reset-scoped forecast
 surplus configure claude --premium opus
@@ -95,7 +95,21 @@ Provider usage windows are shared allowance signals, not a promise that a partic
 
 Surplus cannot prevent charges from paid-overage settings already enabled in a provider account. It does not change billing settings. Codex model discovery describes supported models and reasoning options; it does not reliably label which model is “premium,” so Surplus does not infer a model ranking. A configured premium model is your choice. If Codex does not report a valid weekly window or does not confirm included usage, Surplus keeps the normal settings. A present but malformed short window also disables automatic selection.
 
+Claude's reading is the last sample that a running Claude session's statusline saved, and a new launch accepts that sample for up to 120 minutes. Several sessions started before the next refresh therefore see the same number and can together use more than one check would allow. The recent-burn history also gains Claude samples only while a statusline is running. While the most recent launch in that reset window went premium, the 5-point hysteresis band relaxes the floors, so a burst of launches is checked against looser limits; the first default launch ends the relaxation. Codex is different: Surplus reads it from the Codex app-server at each launch (accepted for up to 5 minutes), so each launch sees the usage the provider has already reported. That is not a promise Codex cannot overshoot. `surplus forecast claude 20` keeps premium off unless at least the reserve plus 20% of the weekly allowance is left, which with the defaults holds the floor at 25% instead of 20% during a run of premium launches. Larger values reserve more. It does not change the pace projection, it needs a saved reading (run `surplus status claude` first), and it expires at the reset or when the Claude account changes.
+
 See [the implementation plan](docs/PLAN.md), [launch and measurement plan](docs/LAUNCH.md), [security notes](SECURITY.md), and [the interactive demo](docs/index.html).
+
+## FAQ
+
+**Why change the effort or model at all, and is high always better?** Allowance expires at the reset, so unused allowance is wasted. Surplus applies the stronger setting only when the pace projection says allowance would otherwise go unused or the near-reset rule applies. Higher effort is not always better: it spends more of the same allowance. An explicit `--model` or `--effort` flag, `SURPLUS_MODEL`, `SURPLUS_EFFORT`, or a provider model variable always passes through unchanged. For Codex, Surplus raises reasoning effort only when the live model catalog confirms it, because discovery does not rank models. You choose the premium model with `surplus configure`.
+
+**What happens during a burst of heavy sessions?** Every new interactive launch is checked again, and a running session is never switched. Premium needs at least 25% of the weekly allowance left, at least 25% of the five-hour window where it is reported, the 5% reserve plus 5% expected usage covered, and a projection at premium burn that leaves at least the reserve plus a 10% margin (15%) unused at the reset. As the burst burns allowance, the projection shrinks and Surplus falls back to the default. While premium is already active in the same reset window, those floors relax by the 5-point hysteresis, to 20% weekly and 10% projected unused, so a burst tends to stay premium until one of them is hit.
+
+**Why can a burst overshoot on Claude?** Because launches read a cached sample, not a live number. See [Important limits](#important-limits) for the mechanism and for what `surplus forecast claude 20` does and does not do.
+
+**How much headroom do I have for an unexpectedly busy day?** Surplus does not predict spikes. It keeps fixed floors. Normally premium needs at least 25% of the week left and a projection that leaves at least 15% unused at the reset, using premium burn of 1.5x for Claude and 1.3x for Codex. The burn rate is the faster of this week's average and the last 24 hours, once Surplus has two hours of samples. Once premium is active the floors are 20% and 10%. In the first 24 hours of a window there is no projection, so Surplus stays on the default. Whatever sits above those floors is your cushion. If you know a heavy stretch is coming, `surplus forecast claude 30` (or `codex`) reserves more until the reset. Automatic busy-day headroom is not built yet.
+
+**What data does Surplus keep, and can it stop charges?** Surplus sends no analytics or usage events. Its state lives under your XDG config and state directories, and the Codex app-server fetches usage metadata through its normal provider connection. Surplus cannot prevent charges from paid-overage settings already enabled in a provider account, and it never changes billing settings.
 
 ## Contributing
 
