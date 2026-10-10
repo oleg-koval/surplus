@@ -208,7 +208,7 @@ const releaseReservation = async (reservation: LaunchReservation | undefined): P
  * Returns a routing decision with available usage, premium effort, and Claude identity metadata.
  * Performs filesystem and provider-process IO; unavailable telemetry produces a default decision, while configuration, path-resolution, and uncaught provider errors reject.
  */
-const prepare = async (provider: Provider, reserve = false): Promise<{ decision: ReturnType<typeof decide>; guards: ReturnType<typeof policyGuards>; config: ProviderConfig; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string; reservation?: LaunchReservation }> => {
+const prepare = async (provider: Provider, reserve = false): Promise<{ decision: ReturnType<typeof decide>; guards: ReturnType<typeof policyGuards>; config: ProviderConfig; premiumTargetUnavailable?: boolean; usage?: UsageSnapshot; forecast?: WorkloadForecast; premiumEffort?: string; identityHash?: string; reservation?: LaunchReservation }> => {
   const config = await readConfig();
   const providerConfig = configured(config, provider);
   const previous = await readState(provider);
@@ -217,8 +217,7 @@ const prepare = async (provider: Provider, reserve = false): Promise<{ decision:
   if (provider === 'claude') {
     const claude = await getClaudeUsage();
     const usage = claude.usage;
-    const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
-    const { decision, reservation } = await decideClaudeWithDebit({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) }, providerConfig.premiumLaunchDebitPercent ?? 0, reserve);
+    const { decision, reservation } = await decideClaudeWithDebit({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) }, providerConfig.premiumLaunchDebitPercent ?? 0, reserve);
     const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
     return { decision, guards, config: providerConfig, ...(reservation ? { reservation } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
@@ -226,10 +225,9 @@ const prepare = async (provider: Provider, reserve = false): Promise<{ decision:
   const discovery = await discoverCodex();
   const usage = discovery?.usage;
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
-  const activeForecast = usage && forecast?.resetAt === usage.resetsAt ? forecast : undefined;
-  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(activeForecast ? { forecast: activeForecast } : {}) });
-  const guards = policyGuards({ config: effectiveConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
-  return { decision, guards, config: effectiveConfig, ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
+  const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}) });
+  const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}) });
+  return { decision, guards, config: providerConfig, ...(effectiveConfig.minWeeklyRemainingPercent > 100 ? { premiumTargetUnavailable: true } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
 /**
@@ -283,6 +281,9 @@ const status = async (provider: Provider): Promise<void> => {
   const floor = `${String(guards.weeklyFloor)}% weekly floor${guards.activePremium ? ` after ${String(config.hysteresisPercent)}% hysteresis` : ''}`;
   const budget = `${String(config.reservePercent)}% reserve + ${String(guards.expectedUsage)}% expected usage`;
   process.stdout.write(`Weekly guard: ${String(guards.weeklyGuard)}% remaining (${floor}; ${budget}).\n`);
+  if (result.premiumTargetUnavailable) {
+    process.stdout.write('Premium target: no supported upgrade from the current Codex model and effort; automatic routing is disabled.\n');
+  }
   if (config.strategy !== 'near-reset' && result.decision.pace) {
     process.stdout.write(`Pace guard: ${String(guards.paceGuard)}% projected unused (${String(config.reservePercent)}% reserve + ${String(guards.paceMargin)}% margin).\n`);
   }
@@ -465,10 +466,14 @@ const forecast = async (provider: Provider, args: string[]): Promise<void> => {
 const configure = async (provider: Provider, args: string[]): Promise<void> => {
   const next: Record<string, string> = {};
   for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
+    const flag = args[index] ?? '';
     const value = args[index + 1];
-    if (!value || !['--premium', '--effort', '--reserve'].includes(flag ?? '')) throw new Error('Use --premium MODEL, --effort LEVEL, or --reserve PERCENT.');
-    next[flag ?? ''] = value;
+    if (!['--premium', '--effort', '--reserve'].includes(flag)) throw new Error('Use --premium MODEL, --effort LEVEL, or --reserve PERCENT.');
+    if (value === undefined || value === '' || value.startsWith('-')) {
+      throw new Error(flag === '--reserve' ? 'Reserve must be a number from 0 to 100.' : `Missing value for ${flag}.`);
+    }
+    if (next[flag] !== undefined) throw new Error(`Duplicate ${flag}.`);
+    next[flag] = value;
     index += 1;
   }
   const reserve = next['--reserve'];
