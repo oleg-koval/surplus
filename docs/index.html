@@ -35,6 +35,7 @@
       <nav class="main-nav" aria-label="Main navigation">
         <a href="#how">How it works</a>
         <a href="#demo">Policy demo</a>
+        <a href="#faq">FAQ</a>
         <a href="./changelog.html">Changelog</a>
         <a class="nav-source" href="https://github.com/oleg-koval/surplus/tree/main">Source <span aria-hidden="true">↗</span></a>
       </nav>
@@ -179,13 +180,29 @@ surplus install</code></pre><button type="button" id="copyInstall" aria-label="C
           <p class="contribution-note">Keep credentials, auth files, prompts, and private project details out of reports.</p>
         </div>
       </section>
+      <section class="section wrap faq-section" id="faq" aria-labelledby="faq-title">
+        <p class="eyebrow">Questions</p>
+        <h2 id="faq-title">What people ask.</h2>
+        <div class="faq-list">
+          <details><summary>Why change the effort or model at all, and is high always better?</summary>
+            <p>Allowance expires at the reset, so unused allowance is wasted. Surplus applies the stronger setting only when the pace projection says allowance would otherwise go unused or the near-reset rule applies. Higher effort spends more of the same allowance. An explicit model or effort flag, or a provider model variable, always passes through unchanged.</p></details>
+          <details><summary>What happens during a burst of heavy sessions?</summary>
+            <p>Every interactive launch eligible for automatic routing is checked again. Launches with an explicit model or effort override, and non-interactive launches, pass through unchanged, and a running session is never switched. Premium needs at least 25% of the week left, at least 25% of the five-hour window where reported, and, for pace-based routing, a projection that still leaves at least 15% unused at the reset. The near-reset strategy does not require this projection threshold. While premium is already active, the weekly floor relaxes to 20% and the pace-based projected-unused floor to 10% (the five-hour floor stays 25%), so a burst tends to stay premium until one of them is hit. For Claude that happens only once a refreshed statusline sample reflects the burn, so launches before it can still go premium.</p></details>
+          <details><summary>Why can a burst overshoot on Claude?</summary>
+            <p>Claude launches read the last sample a running session saved, accepted for up to 120 minutes, so several launches before the next refresh see the same number. Codex is read at each launch. <code>surplus forecast claude 20</code> keeps premium off unless the reserve plus 20% of the week is left. It does not change the pace projection, and it needs a saved Claude reading, which a running session's statusline writes. With defaults that reserve is 25%, the same as the normal floor, so it only matters once premium is already active. <a href="https://github.com/oleg-koval/surplus#important-limits">Details in the README ↗</a></p></details>
+          <details><summary>How much headroom do I have for an unexpectedly busy day?</summary>
+            <p>Surplus does not predict spikes. It keeps fixed floors: at least 25% of the week left and, for pace-based routing, a projection at premium burn (1.5x Claude, 1.3x Codex) that leaves at least 15% unused at the reset. The near-reset strategy does not require this projection threshold. Once premium is active, the weekly floor relaxes to 20% and the pace-based projected-unused floor to 10%. Whatever sits above those floors is your cushion. For a known heavy stretch, <code>surplus forecast claude 30</code> reserves more until the reset. Automatic busy-day headroom is not built yet.</p></details>
+          <details><summary>What data does Surplus keep, and can it stop charges?</summary>
+            <p>Surplus sends no analytics or usage events, and keeps its state in local XDG directories. It cannot prevent charges from paid-overage settings already enabled in a provider account, and it never changes billing settings.</p></details>
+        </div>
+      </section>
       <section class="release-preview wrap" aria-labelledby="release-title"><div><p class="eyebrow">From the changelog</p><h2 id="release-title">What shipped.</h2><p>v0.4.1 adds the Surplus agent skill. v0.4.0 adds Hermes Agent and Pi subscription routing. v0.3.0 adds forecasts for the rest of your week.</p></div><a class="button button-quiet" href="./changelog.html">Read the changelog ↗</a></section>
     </main>
 
     <footer class="site-footer wrap">
       <a class="footer-brand" href="#top"><span class="brand-mark" aria-hidden="true">S+</span><span>surplus</span></a>
       <p>MIT licensed. No CLI usage telemetry. Billing settings stay unchanged.</p>
-      <div class="footer-links"><a href="https://github.com/oleg-koval/surplus">GitHub</a><a href="https://github.com/oleg-koval/surplus/issues">Issues</a><a href="./changelog.html">Changelog</a><a href="#top">Back to top ↑</a></div>
+      <div class="footer-links"><a href="https://github.com/oleg-koval/surplus">GitHub</a><a href="https://github.com/oleg-koval/surplus/issues">Issues</a><a href="#faq">FAQ</a><a href="./changelog.html">Changelog</a><a href="#top">Back to top ↑</a></div>
     </footer>
   </div>
   <script src="./site.js" defer></script>

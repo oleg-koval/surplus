@@ -329,3 +329,15 @@ h2 { font-family: Georgia, 'Times New Roman', serif; font-size: clamp(36px, 4vw,
   .release-entry { padding-block: 30px; }
   .release-entry h2 { margin-bottom: 8px; }
 }
+.faq-section { border-top: 1px solid var(--line); }
+.faq-list { max-width: 820px; margin-top: 32px; }
+.faq-list details { border-top: 1px solid var(--line); }
+.faq-list details:last-child { border-bottom: 1px solid var(--line); }
+.faq-list summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 44px; padding: 18px 0; cursor: pointer; font-size: 17px; font-weight: 650; letter-spacing: -.025em; list-style: none; }
+.faq-list summary::-webkit-details-marker { display: none; }
+.faq-list summary::after { content: "+"; flex: 0 0 auto; color: var(--green-deep); font: 400 20px var(--mono); }
+.faq-list details[open] summary { color: var(--green-deep); }
+.faq-list details[open] summary::after { content: "\2212"; }
+.faq-list p { max-width: 720px; margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.faq-list code { font-family: var(--mono); font-size: 13px; }
+@media (max-width: 680px) { .faq-list summary { font-size: 15px; } }
