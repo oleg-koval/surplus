@@ -1,3 +1,10 @@
+## [0.4.3](https://github.com/oleg-koval/surplus/compare/v0.4.2...v0.4.3) (2026-10-10)
+
+
+### 📚 Documentation
+
+* add FAQ and document the burst limit ([#16](https://github.com/oleg-koval/surplus/issues/16)) ([9e92aa7](https://github.com/oleg-koval/surplus/commit/9e92aa7f47221023af1c54150e90bc912a81b6e4))
+
 ## [0.4.2](https://github.com/oleg-koval/surplus/compare/v0.4.1...v0.4.2) (2026-10-09)
 
 
