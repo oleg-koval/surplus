@@ -1,3 +1,10 @@
+## [0.5.1](https://github.com/oleg-koval/surplus/compare/v0.5.0...v0.5.1) (2026-10-10)
+
+
+### 📚 Documentation
+
+* add README badges and list releases on the site changelog ([#18](https://github.com/oleg-koval/surplus/issues/18)) ([55c09b4](https://github.com/oleg-koval/surplus/commit/55c09b43f82424797ac3ada636e357f8e79923b1))
+
 # [0.5.0](https://github.com/oleg-koval/surplus/compare/v0.4.3...v0.5.0) (2026-10-10)
 
 
