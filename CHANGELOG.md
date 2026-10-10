@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/oleg-koval/surplus/compare/v0.4.3...v0.5.0) (2026-10-10)
+
+
+### ✨ Features
+
+* debit each premium Claude launch against the cached sample ([#17](https://github.com/oleg-koval/surplus/issues/17)) ([fa4674a](https://github.com/oleg-koval/surplus/commit/fa4674a882d5f62caee19edf3e03034141935c25))
+
 ## Unreleased
 
 ### ✨ Features
