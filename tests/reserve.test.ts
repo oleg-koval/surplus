@@ -11,7 +11,7 @@ const savedEnv = new Map<string, string | undefined>();
 const useTempHome = async (): Promise<void> => {
   const home = await mkdtemp(join(tmpdir(), 'surplus-reserve-'));
   homes.push(home);
-  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'SURPLUS_CODEX_BIN', 'SURPLUS_TEST_WEEKLY_USED', 'SURPLUS_TEST_RESETS_AT', 'SURPLUS_TEST_EFFECTIVE_EFFORT']) {
+  for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'SURPLUS_CODEX_BIN', 'SURPLUS_TEST_WEEKLY_USED', 'SURPLUS_TEST_RESETS_AT', 'SURPLUS_TEST_EFFECTIVE_EFFORT', 'SURPLUS_TEST_USAGE_ALLOWED']) {
     savedEnv.set(key, process.env[key]);
   }
   process.env.HOME = home;
@@ -99,5 +99,19 @@ describe('persistent reserve CLI', () => {
     expect(output).toContain('Weekly guard: 25% remaining (25% weekly floor; 5% reserve + 5% expected usage).');
     expect(output).toContain('Premium target: no supported upgrade from the current Codex model and effort; automatic routing is disabled.');
     expect(output).not.toContain('101%');
+  });
+
+  it('does not apply forecast or hysteresis guards when provider usage is disallowed', async () => {
+    await useTempHome();
+    process.env.SURPLUS_TEST_USAGE_ALLOWED = 'false';
+    const resetAt = new Date(Number(process.env.SURPLUS_TEST_RESETS_AT) * 1_000).toISOString();
+    await saveState('codex', { tier: 'premium', resetAt, observedAt: new Date().toISOString() });
+    await saveForecast({ provider: 'codex', resetAt, expectedUsagePercent: 40, source: 'explicit', setAt: new Date().toISOString() });
+
+    const output = await captureStatus();
+    expect(output).toContain('Configured weekly guard: 25% remaining (25% weekly floor; 5% reserve + 5% expected usage). Not applied: current telemetry is unavailable.');
+    expect(output).toContain('current telemetry unavailable');
+    expect(output).not.toContain('40% expected usage before reset');
+    expect(output).not.toContain('after 5% hysteresis');
   });
 });

@@ -219,7 +219,8 @@ const prepare = async (provider: Provider, reserve = false): Promise<{ decision:
     const usage = claude.usage;
     const now = new Date();
     const { decision, reservation } = await decideClaudeWithDebit({ ...(usage ? { usage } : {}), config: providerConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}), now }, providerConfig.premiumLaunchDebitPercent ?? 0, reserve);
-    const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
+    const guardUsage = decision.weeklyRemainingPercent === null ? undefined : usage;
+    const guards = policyGuards({ config: providerConfig, ...(guardUsage ? { usage: guardUsage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
     return { decision, guards, config: providerConfig, ...(reservation ? { reservation } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(providerConfig.premiumEffort ? { premiumEffort: providerConfig.premiumEffort } : {}), ...(claude.identityHash ? { identityHash: claude.identityHash } : {}) };
   }
 
@@ -228,7 +229,8 @@ const prepare = async (provider: Provider, reserve = false): Promise<{ decision:
   const effectiveConfig = codexUpgradeConfig(providerConfig, discovery);
   const now = new Date();
   const decision = decide({ ...(usage ? { usage } : {}), config: effectiveConfig, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}), now });
-  const guards = policyGuards({ config: providerConfig, ...(usage ? { usage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
+  const guardUsage = decision.weeklyRemainingPercent === null ? undefined : usage;
+  const guards = policyGuards({ config: providerConfig, ...(guardUsage ? { usage: guardUsage } : {}), ...(previous ? { previous } : {}), ...(forecast ? { forecast } : {}), now });
   return { decision, guards, config: providerConfig, ...(effectiveConfig.minWeeklyRemainingPercent > 100 ? { premiumTargetUnavailable: true } : {}), ...(usage ? { usage } : {}), ...(forecast ? { forecast } : {}), ...(effectiveConfig.premiumEffort ? { premiumEffort: effectiveConfig.premiumEffort } : {}) };
 };
 
@@ -282,7 +284,9 @@ const status = async (provider: Provider): Promise<void> => {
   const { guards, config } = result;
   const floor = `${String(guards.weeklyFloor)}% weekly floor${guards.activePremium ? ` after ${String(config.hysteresisPercent)}% hysteresis` : ''}`;
   const budget = `${String(config.reservePercent)}% reserve + ${String(guards.expectedUsage)}% expected usage`;
-  process.stdout.write(`Weekly guard: ${String(guards.weeklyGuard)}% remaining (${floor}; ${budget}).\n`);
+  const guardLabel = result.decision.weeklyRemainingPercent === null ? 'Configured weekly guard' : 'Weekly guard';
+  const unavailable = result.decision.weeklyRemainingPercent === null ? ' Not applied: current telemetry is unavailable.' : '';
+  process.stdout.write(`${guardLabel}: ${String(guards.weeklyGuard)}% remaining (${floor}; ${budget}).${unavailable}\n`);
   if (result.premiumTargetUnavailable) {
     process.stdout.write('Premium target: no supported upgrade from the current Codex model and effort; automatic routing is disabled.\n');
   }
@@ -292,7 +296,7 @@ const status = async (provider: Provider): Promise<void> => {
   if (!result.forecast) return;
   if (Date.parse(result.forecast.resetAt) <= Date.now()) {
     process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
-  } else if (!result.usage) {
+  } else if (!result.usage || result.decision.weeklyRemainingPercent === null) {
     process.stdout.write(`Workload forecast: ${String(result.forecast.expectedUsagePercent)}% expected usage for reset ${result.forecast.resetAt}; current telemetry unavailable.\n`);
   } else if (result.forecast.resetAt !== result.usage.resetsAt) {
     process.stdout.write(`Workload forecast: expired with the previous reset window (${result.forecast.resetAt}); ignored.\n`);
