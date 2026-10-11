@@ -218,6 +218,20 @@ describe('hook output', () => {
     });
   });
 
+  it('announces the starting effort for a wrapper-routed Codex session', async () => {
+    await withHome(async () => {
+      setEnv('SURPLUS_ROUTED_TIER', 'premium');
+      const discover = (): Promise<CodexDiscovery> => Promise.resolve({
+        usage: { ...premiumUsage, provider: 'codex' },
+        effectiveModel: 'gpt-test', effectiveEffort: 'low', supportedEfforts: ['low', 'high'],
+        models: [{ model: 'gpt-test', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }],
+      });
+      expect(await hookMessage('codex', 'session-start', { session_id: 'c', model: 'gpt-test' }, { now, discover })).toBe(
+        'surplus: on pace to leave ~45% unused at reset · starting on high effort · 80% left · resets in 4.0d',
+      );
+    });
+  });
+
   it('recomputes and records Codex routing state while discovery is throttled', async () => {
     await withHome(async () => {
       await saveConfig({ ...defaultConfig, features: { ...defaultFeatures, promptNudge: true } });

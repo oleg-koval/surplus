@@ -64,7 +64,7 @@ export const hookMessage = async (provider: Provider, event: HookEvent, input: u
 
   const { decision, config: effective } = await decideFor(provider, config.providers[provider], discovery, usage, now);
   const state = noticeState(decision);
-  const routedPremium = provider === 'claude' && env.SURPLUS_ROUTED_TIER === 'premium';
+  const routedPremium = env.SURPLUS_ROUTED_TIER === 'premium';
   const message = event === 'session-start'
     ? sessionStartMessage({ decision, config: effective, ...(sessionModel ? { sessionModel } : {}), routedPremium })
     : promptSubmitMessage({ previous: (prior?.state as 'premium' | 'run-out' | 'none' | undefined) ?? 'none', decision, config: effective, ...(sessionModel ? { sessionModel } : {}), routedPremium });
