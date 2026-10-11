@@ -45,7 +45,9 @@ const paceReason = (decision: Decision, config: ProviderConfig): string | undefi
 
 /**
  * Purely returns a premium-window or run-out notice, or undefined when neither applies.
- * The session model and routedPremium flag determine whether a premium notice marks the choice active or suggests a switch.
+ * The session model and routedPremium flag shape the premium notice: wrapper-routed
+ * sessions are told they are starting on the premium choice, already-premium sessions
+ * see it marked active, and other sessions receive a manual switch hint.
  */
 export const sessionStartMessage = (input: {
   readonly decision: Decision;
@@ -72,7 +74,8 @@ export const sessionStartMessage = (input: {
 
 /**
  * Purely returns a prompt notice only when the state differs from what this session was last told.
- * Returns undefined for unchanged or unremarkable states and for premium already active according to the session model or routedPremium flag.
+ * Returns undefined for unchanged or unremarkable states and for premium already active
+ * according to the session model or the routedPremium flag (wrapper-routed sessions).
  */
 export const promptSubmitMessage = (input: {
   readonly previous: NoticeState;
