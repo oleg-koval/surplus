@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/oleg-koval/surplus/compare/v0.6.0...v0.7.0) (2026-10-11)
+
+
+### ✨ Features
+
+* explain pace-based premium routing at session start ([#22](https://github.com/oleg-koval/surplus/issues/22)) ([a3b2c98](https://github.com/oleg-koval/surplus/commit/a3b2c986bb02f98cfae808e5254e450989dfdbcb)), closes [#21](https://github.com/oleg-koval/surplus/issues/21)
+
 # [0.6.0](https://github.com/oleg-koval/surplus/compare/v0.5.1...v0.6.0) (2026-10-10)
 
 
