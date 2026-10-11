@@ -24,6 +24,7 @@
 ### ✨ Features
 
 * Claude launches routed to the premium model now add an estimated per-launch debit (`premiumLaunchDebitPercent`, default 1, 0 disables) to the cached weekly reading until the next statusline sample, limiting burst overshoot.
+* explain pace-based premium routing in session-start notices, following a suggestion from [@globooost_hq](https://x.com/globooost_hq) ([#21](https://github.com/oleg-koval/surplus/issues/21)).
 
 ### 🐛 Bug Fixes
 

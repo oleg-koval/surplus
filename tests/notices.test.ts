@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeSegment, main } from '../src/cli.js';
-import { dataDir, defaultConfig, defaultFeatures, readHookSessions, readUsageHistory, saveConfig, saveForecast, saveHookSession, saveUsage } from '../src/core/files.js';
+import { dataDir, defaultConfig, defaultFeatures, readHookSessions, readUsageHistory, saveConfig, saveForecast, saveHookSession, saveUsage, updateLaunchDebit } from '../src/core/files.js';
 import { hookMessage, runHook } from '../src/hook.js';
 import { statuslineSegment, withSegment } from '../src/core/notice.js';
 import type { UsageSnapshot } from '../src/core/types.js';
@@ -144,15 +144,36 @@ describe('hook output', () => {
     });
   });
 
-  it('announces an open premium window with a switch hint, or (active) when already on it', async () => {
+  it('explains pace-based routing and distinguishes starting, manual, and active sessions', async () => {
     await withHome(async () => {
       await saveUsage(premiumUsage);
       const hint = await hookMessage('claude', 'session-start', { session_id: 's', model: 'claude-sonnet-4-6' }, { now });
-      expect(hint).toMatch(/^surplus: premium window open · opus · 80% left · resets in 4\.0d → \/model opus$/);
+      expect(hint).toBe('surplus: on pace to leave ~40% unused at reset · premium window open · opus · 80% left · resets in 4.0d → /model opus');
       const active = await hookMessage('claude', 'session-start', { session_id: 's', model: 'claude-opus-4-8' }, { now });
-      expect(active).toMatch(/\(active\)$/);
+      expect(active).toBe('surplus: on pace to leave ~40% unused at reset · premium window open · opus · 80% left · resets in 4.0d (active)');
       setEnv('SURPLUS_ROUTED_TIER', 'premium');
-      expect(await hookMessage('claude', 'session-start', { session_id: 's' }, { now })).toMatch(/\(active\)$/);
+      expect(await hookMessage('claude', 'session-start', { session_id: 's' }, { now })).toBe('surplus: on pace to leave ~40% unused at reset · starting on opus · 80% left · resets in 4.0d');
+    });
+  });
+
+  it('reports the debit-adjusted projection for wrapper-routed claude sessions', async () => {
+    await withHome(async () => {
+      await saveUsage(premiumUsage);
+      // One premium launch was already debited against this exact cached sample.
+      await updateLaunchDebit('claude', () => ({ resetsAt: premiumUsage.resetsAt, observedAt: premiumUsage.observedAt, identityHash: 'id-1', percent: 1 }));
+      setEnv('SURPLUS_ROUTED_TIER', 'premium');
+      expect(await hookMessage('claude', 'session-start', { session_id: 's' }, { now }))
+        .toBe('surplus: on pace to leave ~39% unused at reset · starting on opus · 79% left · resets in 4.0d');
+    });
+  });
+
+  it('keeps near-reset notices unchanged when no pace explanation is available', async () => {
+    await withHome(async () => {
+      await saveConfig({ ...defaultConfig, providers: { ...defaultConfig.providers, claude: { ...defaultConfig.providers.claude, strategy: 'near-reset' } } });
+      const nearResetUsage = { ...premiumUsage, resetsAt: new Date(now.getTime() + day).toISOString() };
+      await saveUsage(nearResetUsage);
+      const message = await hookMessage('claude', 'session-start', { session_id: 's', model: 'claude-sonnet-4-6' }, { now });
+      expect(message).toBe('surplus: premium window open · opus · 80% left · resets in 1.0d → /model opus');
     });
   });
 
@@ -177,10 +198,10 @@ describe('hook output', () => {
     await withHome(async () => {
       await saveUsage(premiumUsage);
       const out = await runHook('claude', 'session-start', () => Promise.resolve({ session_id: 's' }), { now });
-      expect(JSON.parse(out)).toEqual({ systemMessage: expect.stringMatching(/^surplus: premium window open/) as unknown });
+      expect(JSON.parse(out)).toEqual({ systemMessage: expect.stringMatching(/^surplus: on pace to leave ~40% unused at reset/) as unknown });
       expect(await runHook('claude', 'session-start', () => Promise.reject(new Error('bad stdin')), { now })).toBe('');
       // A non-object payload degrades to "no session id, no model" rather than failing.
-      expect(await runHook('claude', 'session-start', () => Promise.resolve('not an object'), { now })).toMatch(/premium window open/);
+      expect(await runHook('claude', 'session-start', () => Promise.resolve('not an object'), { now })).toMatch(/on pace to leave ~40% unused/);
     });
   });
 
@@ -203,7 +224,21 @@ describe('hook output', () => {
         models: [{ model: 'gpt-test', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }],
       });
       expect(await hookMessage('codex', 'session-start', { session_id: 'c' }, { now, discover })).toBe(
-        'surplus: premium window open · high effort · 80% left · resets in 4.0d → raise effort to high (/model)',
+        'surplus: on pace to leave ~45% unused at reset · premium window open · high effort · 80% left · resets in 4.0d → raise effort to high (/model)',
+      );
+    });
+  });
+
+  it('announces the starting effort for a wrapper-routed Codex session', async () => {
+    await withHome(async () => {
+      setEnv('SURPLUS_ROUTED_TIER', 'premium');
+      const discover = (): Promise<CodexDiscovery> => Promise.resolve({
+        usage: { ...premiumUsage, provider: 'codex' },
+        effectiveModel: 'gpt-test', effectiveEffort: 'low', supportedEfforts: ['low', 'high'],
+        models: [{ model: 'gpt-test', supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }] }],
+      });
+      expect(await hookMessage('codex', 'session-start', { session_id: 'c', model: 'gpt-test' }, { now, discover })).toBe(
+        'surplus: on pace to leave ~45% unused at reset · starting on high effort · 80% left · resets in 4.0d',
       );
     });
   });

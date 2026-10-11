@@ -62,7 +62,7 @@ Surplus can tell you about a premium window from inside the session, which also 
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `--session-notice` | on | When a session starts, prints one `surplus:` line only if a premium window is open (with a `/model` hint, or `(active)` if the session is already on it) or if you are on pace to run out before the reset. Silent otherwise. |
+| `--session-notice` | on | When a session starts, prints one `surplus:` line only if a premium window is open (including the projected unused allowance when pace routing selected it, with a `/model` hint, `starting on ...` for wrapper-routed sessions, or `(active)` if the session is already on it) or if you are on pace to run out before the reset. Silent otherwise. |
 | `--prompt-nudge` | off | On each prompt, speaks only when the state changed since it last told that session. It never switches the model for you. |
 | `--statusline-segment` | off | Adds `⚡ opus 41% 1.8d` (premium open) and/or `⚠ pace` (on pace to run out) to the first line of the Claude Code statusline. |
 

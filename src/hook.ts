@@ -1,8 +1,9 @@
 import type { Decision, Provider, ProviderConfig, UsageSnapshot } from './core/types.js';
 import { decide } from './core/policy.js';
+import { pendingDebitPercent } from './core/debit.js';
 import { codexUpgradeConfig } from './core/codex-policy.js';
 import { noticeState, promptSubmitMessage, sessionStartMessage } from './core/notice.js';
-import { readActiveForecast, readClaudeIdentity, readConfig, readHookSessions, readState, readUsage, readUsageHistory, saveHookSession, saveUsage } from './core/files.js';
+import { readActiveForecast, readClaudeIdentity, readConfig, readHookSessions, readLaunchDebit, readState, readUsage, readUsageHistory, saveHookSession, saveUsage } from './core/files.js';
 import { discoverCodex } from './providers/codex.js';
 import type { CodexDiscovery } from './providers/codex.js';
 
@@ -27,7 +28,11 @@ const decideFor = async (provider: Provider, config: ProviderConfig, discovery: 
   const history = await readUsageHistory(provider);
   const effective = provider === 'codex' ? codexUpgradeConfig(config, discovery) : config;
   const forecast = usage ? await readActiveForecast(provider, usage.resetsAt) : undefined;
-  return { decision: decide({ ...(usage ? { usage } : {}), config: effective, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}), now }), config: effective };
+  // Notices must quote the same projected-unused figure routing used, so include
+  // any launch debit the cached sample does not yet reflect (same helper as the CLI).
+  const debit = usage ? await readLaunchDebit(provider).catch(() => undefined) : undefined;
+  const pending = pendingDebitPercent(usage, debit, effective.premiumLaunchDebitPercent ?? 0);
+  return { decision: decide({ ...(usage ? { usage } : {}), config: effective, ...(previous ? { previous } : {}), history, ...(forecast ? { forecast } : {}), ...(pending > 0 ? { pendingDebitPercent: pending } : {}), now }), config: effective };
 };
 
 /**
@@ -64,7 +69,7 @@ export const hookMessage = async (provider: Provider, event: HookEvent, input: u
 
   const { decision, config: effective } = await decideFor(provider, config.providers[provider], discovery, usage, now);
   const state = noticeState(decision);
-  const routedPremium = provider === 'claude' && env.SURPLUS_ROUTED_TIER === 'premium';
+  const routedPremium = env.SURPLUS_ROUTED_TIER === 'premium';
   const message = event === 'session-start'
     ? sessionStartMessage({ decision, config: effective, ...(sessionModel ? { sessionModel } : {}), routedPremium })
     : promptSubmitMessage({ previous: (prior?.state as 'premium' | 'run-out' | 'none' | undefined) ?? 'none', decision, config: effective, ...(sessionModel ? { sessionModel } : {}), routedPremium });
