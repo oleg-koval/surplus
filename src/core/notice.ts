@@ -36,6 +36,13 @@ const isActive = (decision: Decision, config: ProviderConfig, sessionModel: stri
 const switchHint = (decision: Decision): string =>
   decision.model === 'auto' ? `→ raise effort to ${decision.effort ?? 'high'} (/model)` : `→ /model ${decision.model}`;
 
+/** Returns the pace-based reason only when pace routing, rather than near-reset routing, explains the premium choice. */
+const paceReason = (decision: Decision, config: ProviderConfig): string | undefined => {
+  const projectedUnused = decision.pace?.projectedUnusedPercent;
+  if (config.strategy === 'near-reset' || projectedUnused === undefined || !Number.isFinite(projectedUnused)) return undefined;
+  return `on pace to leave ~${String(Math.max(0, Math.round(projectedUnused)))}% unused at reset`;
+};
+
 /**
  * Purely returns a premium-window or run-out notice, or undefined when neither applies.
  * The session model and routedPremium flag determine whether a premium notice marks the choice active or suggests a switch.
@@ -51,8 +58,11 @@ export const sessionStartMessage = (input: {
   if (state === 'premium') {
     const left = decision.weeklyRemainingPercent === null ? '' : ` · ${String(Math.round(decision.weeklyRemainingPercent))}% left`;
     const reset = decision.minutesUntilReset === null ? '' : ` · resets in ${formatDuration(decision.minutesUntilReset)}`;
-    const tail = isActive(decision, config, sessionModel, routedPremium) ? '(active)' : switchHint(decision);
-    return `surplus: premium window open · ${premiumLabel(decision)}${left}${reset} ${tail}`;
+    const reason = paceReason(decision, config);
+    const active = isActive(decision, config, sessionModel, routedPremium);
+    const choice = routedPremium ? `starting on ${premiumLabel(decision)}` : `premium window open · ${premiumLabel(decision)}`;
+    const tail = active && !routedPremium ? '(active)' : routedPremium ? '' : switchHint(decision);
+    return `surplus: ${reason ? `${reason} · ` : ''}${choice}${left}${reset}${tail ? ` ${tail}` : ''}`;
   }
   if (state === 'run-out') {
     return `surplus: on pace to run out ~${formatDuration(decision.pace?.runsOutBeforeResetMinutes ?? 0)} before reset; staying on default`;
