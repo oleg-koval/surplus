@@ -8,6 +8,10 @@
 
 Surplus watches the included usage windows exposed by Claude Code and Codex CLI. When your usage pace says part of the weekly allowance would otherwise go unused, it can start a new interactive session with a model or reasoning level you choose. It also supports Hermes Agent and Pi when configured for a Claude or Codex subscription.
 
+![Terminal output of surplus demo: a premium decision for Opus with 40% weekly remaining and the reason, on pace to leave about 25% unused at reset](docs/surplus-demo.png)
+
+`surplus demo` prints sample data and never queries your account. `surplus status` prints the same decision and reason for your real usage.
+
 ## Install
 
 Requires POSIX Node.js 22.21+ or 24.10+, plus at least one supported CLI. POSIX wrappers use stable `process.execve` for provider launches, preserving the provider PID, terminal signals, and job control. Automatic model selection remains limited to fully interactive terminals. Windows integration is unsupported; shell installation supports zsh and bash.
