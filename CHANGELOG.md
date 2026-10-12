@@ -1,3 +1,10 @@
+## [0.7.1](https://github.com/oleg-koval/surplus/compare/v0.7.0...v0.7.1) (2026-10-12)
+
+
+### 📚 Documentation
+
+* add surplus demo screenshot to the README ([#23](https://github.com/oleg-koval/surplus/issues/23)) ([54ac87b](https://github.com/oleg-koval/surplus/commit/54ac87ba917bf45769d0497fe4ee6819c785538c))
+
 # [0.7.0](https://github.com/oleg-koval/surplus/compare/v0.6.0...v0.7.0) (2026-10-11)
 
 
