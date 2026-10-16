@@ -21,8 +21,9 @@ try {
   const state = join(home, 'state');
   const config = join(home, 'config');
   const fakeBin = join(fixture, 'provider-bin');
+  const hostileBin = join(fixture, 'hostile-bin');
   process.env.npm_config_cache = join(fixture, 'npm-cache');
-  await Promise.all([mkdir(packDir), mkdir(prefix), mkdir(home), mkdir(fakeBin)]);
+  await Promise.all([mkdir(packDir), mkdir(prefix), mkdir(home), mkdir(fakeBin), mkdir(hostileBin)]);
   await mkdir(join(home, '.claude'));
   const priorStatusLine = { type: 'command', command: "printf 'original statusline'", padding: 4 };
   await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ theme: 'dark', statusLine: priorStatusLine }));
@@ -93,7 +94,9 @@ try {
     seven_day: { used_percentage: 60, resets_at: Math.floor(Date.now() / 1000) + 24 * 60 * 60 },
   } });
   const wrapper = join(state, 'surplus', 'bin', 'claude');
-  const path = [join(state, 'surplus', 'bin'), join(prefix, 'node_modules', '.bin'), fakeBin, process.env.PATH].join(':');
+  await writeFile(join(hostileBin, 'surplus'), '#!/bin/sh\nexit 91\n');
+  await chmod(join(hostileBin, 'surplus'), 0o755);
+  const path = [hostileBin, join(state, 'surplus', 'bin'), join(prefix, 'node_modules', '.bin'), fakeBin, process.env.PATH].join(':');
   const codexArgsPath = join(fixture, 'codex-args.txt');
   const launchEnv = { ...env, PATH: path, SURPLUS_ARGS_FILE: argsPath, SURPLUS_CODEX_ARGS_FILE: codexArgsPath, SURPLUS_STATUSLINE_COMMAND: statuslineCommand, SURPLUS_STATUSLINE_SAMPLE: sample };
   const pipedCodex = spawnSync(surplus, ['run', 'codex', 'scripted-task'], { encoding: 'utf8', env: launchEnv, input: '' });

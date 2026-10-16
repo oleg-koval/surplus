@@ -3,6 +3,7 @@ import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendEffort, appendModel, findExecutable, hasExplicitOverride, shouldAutomaticallyRoute } from '../src/core/launch.js';
+import { managedWrapperContents } from '../src/core/managed-wrapper.js';
 
 describe('provider executable lookup', () => {
   it.skipIf(process.platform === 'win32')('uses Node\'s default POSIX executable search when PATH is unset', async () => {
@@ -76,7 +77,7 @@ describe('provider executable lookup', () => {
       await Promise.all([mkdir(oldManagedBin, { recursive: true }), mkdir(providerBin), mkdir(newHome)]);
       const staleWrapper = join(oldManagedBin, 'codex');
       const realProvider = join(providerBin, 'codex');
-      await writeFile(staleWrapper, '#!/bin/sh\nexec surplus run codex "$@"\n');
+      await writeFile(staleWrapper, managedWrapperContents('codex'));
       await chmod(staleWrapper, 0o755);
       await writeFile(realProvider, '#!/bin/sh\nexit 0\n');
       await chmod(realProvider, 0o755);

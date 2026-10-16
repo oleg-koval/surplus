@@ -7,6 +7,7 @@ import { main } from '../src/cli.js';
 import { configPath, dataDir, defaultConfig, saveConfig } from '../src/core/files.js';
 import { resolveHomeDirectory } from '../src/core/xdg.js';
 import { installClaudeStatusLine, installShell, statuslineCommand, surplusExecutable, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
+import { managedWrapperContents } from '../src/core/managed-wrapper.js';
 
 const tempHomes: string[] = [];
 const withHome = async (run: (home: string) => Promise<void>): Promise<void> => {
@@ -35,7 +36,7 @@ describe('reversible install', () => {
       await installShell();
       for (const provider of ['hermes', 'pi']) {
         const path = join(home, 'state', 'surplus', 'bin', provider);
-        expect(await readFile(path, 'utf8')).toBe(`#!/bin/sh\nexec surplus run ${provider} "$@"\n`);
+        expect(await readFile(path, 'utf8')).toBe(managedWrapperContents(provider));
         expect((await stat(path)).mode & 0o100).not.toBe(0);
       }
       await uninstallShell();
@@ -112,23 +113,15 @@ describe('reversible install', () => {
   it('repairs missing execute permission only on exact Surplus wrappers', async () => {
     await withHome(async (home) => {
       const codexWrapper = join(home, 'state', 'surplus', 'bin', 'codex');
-      const commandBin = join(home, 'command-bin');
-      const argsPath = join(home, 'wrapper-args');
       await installShell();
       await chmod(codexWrapper, 0o641);
 
       await installShell();
 
       expect((await stat(codexWrapper)).mode & 0o100).not.toBe(0);
-      await mkdir(commandBin);
-      const fakeSurplus = join(commandBin, 'surplus');
-      await writeFile(fakeSurplus, '#!/bin/sh\nprintf "%s\\n" "$@" > "$SURPLUS_WRAPPER_ARGS"\n');
-      await chmod(fakeSurplus, 0o755);
-      const launched = spawnSync(codexWrapper, ['--model', 'fixture'], {
-        encoding: 'utf8', env: { HOME: home, PATH: commandBin, SURPLUS_WRAPPER_ARGS: argsPath },
-      });
-      expect(launched.status).toBe(0);
-      expect(await readFile(argsPath, 'utf8')).toBe('run\ncodex\n--model\nfixture\n');
+      const contents = await readFile(codexWrapper, 'utf8');
+      expect(contents).toBe(managedWrapperContents('codex'));
+      expect(contents).not.toContain('exec surplus ');
 
       await writeFile(codexWrapper, '#!/bin/sh\n# user-owned\n');
       const editedMode = (await stat(codexWrapper)).mode & 0o777;

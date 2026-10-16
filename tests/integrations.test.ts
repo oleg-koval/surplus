@@ -39,6 +39,14 @@ describe('Hermes integration', () => {
   it('accepts only complete Claude or Codex subscription windows', () => {
     expect(parseHermesUsage(hermesDocument('anthropic'))?.provider).toBe('claude');
     expect(parseHermesUsage(hermesDocument('openai-codex'))?.provider).toBe('codex');
+    const currentLabels = hermesDocument('anthropic') as Record<string, unknown>;
+    expect(parseHermesUsage({
+      ...currentLabels,
+      windows: [
+        { label: 'Current session', used_percent: 20, resets_at: new Date(Date.now() + 60 * 60_000).toISOString() },
+        { label: 'Current week', used_percent: 40, resets_at: new Date(Date.now() + 24 * 60 * 60_000).toISOString() },
+      ],
+    })?.provider).toBe('claude');
     expect(parseHermesUsage(hermesDocument('openai-codex', false))?.sessionWindow).toBe('absent');
     expect(parseHermesUsage(hermesDocument('anthropic', false))).toBeUndefined();
     expect(parseHermesUsage(hermesDocument('openrouter'))).toBeUndefined();
