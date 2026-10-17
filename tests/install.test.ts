@@ -36,12 +36,48 @@ describe('reversible install', () => {
       await installShell();
       for (const provider of ['hermes', 'pi']) {
         const path = join(home, 'state', 'surplus', 'bin', provider);
-        expect(await readFile(path, 'utf8')).toBe(managedWrapperContents(provider));
+        const contents = await readFile(path, 'utf8');
+        expect(contents).toContain(` run '${provider}' "$@"\n`);
+        expect(contents).not.toContain('exec surplus run');
         expect((await stat(path)).mode & 0o100).not.toBe(0);
       }
       await uninstallShell();
       for (const provider of ['hermes', 'pi']) {
         await expect(readFile(join(home, 'state', 'surplus', 'bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+  });
+
+  it('refreshes legacy and stale direct wrappers, and removes both on uninstall', async () => {
+    await withHome(async (home) => {
+      await installShell();
+      const bin = join(home, 'state', 'surplus', 'bin');
+      await writeFile(join(bin, 'codex'), '#!/bin/sh\nexec surplus run codex "$@"\n');
+      await writeFile(join(bin, 'hermes'), managedWrapperContents('hermes', '/old/node', '/old/cli.js'));
+
+      await installShell();
+
+      for (const provider of ['codex', 'hermes']) {
+        const contents = await readFile(join(bin, provider), 'utf8');
+        expect(contents).toContain(` run '${provider}' "$@"\n`);
+        expect(contents).not.toContain('exec surplus run');
+        expect(contents).not.toContain('/old/node');
+      }
+
+      await writeFile(join(bin, 'pi'), '#!/bin/sh\nexec surplus run pi "$@"\n');
+      await uninstallShell();
+      for (const provider of ['codex', 'hermes', 'pi']) {
+        await expect(readFile(join(bin, provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+  });
+
+  it('serializes concurrent installs before publishing managed wrappers', async () => {
+    await withHome(async (home) => {
+      await Promise.all([installShell(), installShell(), installShell()]);
+      const bin = join(home, 'state', 'surplus', 'bin');
+      for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
+        expect(await readFile(join(bin, provider), 'utf8')).toContain(` run '${provider}' "$@"\n`);
       }
     });
   });
@@ -120,7 +156,7 @@ describe('reversible install', () => {
 
       expect((await stat(codexWrapper)).mode & 0o100).not.toBe(0);
       const contents = await readFile(codexWrapper, 'utf8');
-      expect(contents).toBe(managedWrapperContents('codex'));
+      expect(contents).toContain(' run \'codex\' "$@"\n');
       expect(contents).not.toContain('exec surplus ');
 
       await writeFile(codexWrapper, '#!/bin/sh\n# user-owned\n');

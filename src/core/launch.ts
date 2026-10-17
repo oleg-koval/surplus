@@ -4,7 +4,7 @@ import { constants as osConstants, homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Client, Provider } from './types.js';
-import { managedWrapperContents } from './managed-wrapper.js';
+import { isManagedWrapperContents } from './managed-wrapper.js';
 import { resolveHomeDirectory, surplusDataDirectory } from './xdg.js';
 
 const claudeUtilityCommand = (args: readonly string[]): string | undefined => {
@@ -91,8 +91,7 @@ export const findExecutable = async (name: string, env: NodeJS.ProcessEnv, homeD
   const isManagedWrapper = async (path: string): Promise<boolean> => {
     try {
       const details = await stat(path);
-      const contents = managedWrapperContents(name);
-      return details.isFile() && details.size === Buffer.byteLength(contents) && await readFile(path, 'utf8') === contents;
+      return details.isFile() && isManagedWrapperContents(name, await readFile(path, 'utf8'));
     } catch { return false; }
   };
   if (explicit) {

@@ -4,8 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dataDir } from '../core/files.js';
-import { managedWrapperContents } from '../core/managed-wrapper.js';
+import { dataDir, withFileLock } from '../core/files.js';
+import { isManagedWrapperContents, managedWrapperContents } from '../core/managed-wrapper.js';
 import { resolveHomeDirectory } from '../core/xdg.js';
 
 const begin = '# >>> surplus managed block >>>';
@@ -128,20 +128,24 @@ export const writeAtomic = async (path: string, contents: string, requestedMode:
   await rename(temporary, destination);
 };
 
-export const installShell = async (): Promise<void> => {
+const installShellUnlocked = async (): Promise<void> => {
   const bin = managedBin();
   const rcs = await shellRcs();
   const wrappersToCreate: string[] = [];
+  const wrappersToRefresh: { readonly path: string; readonly provider: string; readonly contents: string; readonly mode: number }[] = [];
   const wrappersToRepair: { readonly path: string; readonly mode: number }[] = [];
   for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
     const path = join(bin, provider);
     try {
       const current = await readFile(path, 'utf8');
-      if (current !== wrapper(provider)) throw new Error(`Refusing to overwrite an existing ${path}.`);
       const mode = (await stat(path)).mode & 0o777;
-      try { await access(path, constants.X_OK); } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EACCES') throw error;
-        wrappersToRepair.push({ path, mode });
+      if (!isManagedWrapperContents(provider, current)) throw new Error(`Refusing to overwrite an existing ${path}.`);
+      if (current !== wrapper(provider)) wrappersToRefresh.push({ path, provider, contents: current, mode });
+      else {
+        try { await access(path, constants.X_OK); } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EACCES') throw error;
+          wrappersToRepair.push({ path, mode });
+        }
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -157,14 +161,20 @@ export const installShell = async (): Promise<void> => {
     return { path, source, result };
   }));
   await mkdir(bin, { recursive: true, mode: 0o700 });
-  const created: string[] = [];
+  const created: { readonly path: string; readonly provider: string }[] = [];
+  const refreshed: typeof wrappersToRefresh[number][] = [];
   const writtenRcs: typeof rcChanges[number][] = [];
   const repairedModes: typeof wrappersToRepair[number][] = [];
   try {
     for (const path of wrappersToCreate) {
       const provider = path.slice(path.lastIndexOf('/') + 1);
       await writeAtomic(path, wrapper(provider), 0o755);
-      created.push(path);
+      created.push({ path, provider });
+    }
+    for (const change of wrappersToRefresh) {
+      refreshed.push(change);
+      await writeAtomic(change.path, wrapper(change.provider), change.mode);
+      await chmod(change.path, change.mode | 0o111);
     }
     for (const change of rcChanges) {
       if (change.result === change.source) continue;
@@ -191,9 +201,17 @@ export const installShell = async (): Promise<void> => {
       }
     }
     for (const path of created) {
-      const provider = path.slice(path.lastIndexOf('/') + 1);
+      const provider = path.provider;
       try {
-        if (await readFile(path, 'utf8') === wrapper(provider)) await unlink(path);
+        if (await readFile(path.path, 'utf8') === wrapper(provider)) await unlink(path.path);
+      } catch (rollbackError) {
+        if ((rollbackError as NodeJS.ErrnoException).code !== 'ENOENT') rollbackFailures.push(rollbackError);
+      }
+    }
+    for (const change of refreshed.reverse()) {
+      try {
+        await writeAtomic(change.path, change.contents, change.mode);
+        await chmod(change.path, change.mode);
       } catch (rollbackError) {
         if ((rollbackError as NodeJS.ErrnoException).code !== 'ENOENT') rollbackFailures.push(rollbackError);
       }
@@ -202,6 +220,8 @@ export const installShell = async (): Promise<void> => {
     throw error;
   }
 };
+
+export const installShell = async (): Promise<void> => withFileLock(join(managedBin(), '.install'), installShellUnlocked, 10_000);
 
 export const uninstallShell = async (): Promise<void> => {
   const candidates = shellRcCandidates();
@@ -224,7 +244,7 @@ export const uninstallShell = async (): Promise<void> => {
     const path = join(managedBin(), provider);
     try {
       const contents = await readFile(path, 'utf8');
-      if (contents === wrapper(provider)) await unlink(path);
+      if (isManagedWrapperContents(provider, contents)) await unlink(path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') recordFailure(path, error);
     }

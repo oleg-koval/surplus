@@ -112,10 +112,10 @@ try {
   const directCapture = spawnSync(surplus, ['capture', 'claude'], { encoding: 'utf8', env: directEnv, input: sample });
   assert.equal(directCapture.status, 0, `direct-session capture should resolve its active identity: ${directCapture.stderr}`);
   assert.equal(JSON.parse(await readFile(join(state, 'surplus', 'claude-usage.json'), 'utf8')).identityHash, identityHash);
-  const first = spawnSync(wrapper, ['task', 'second argument'], { encoding: 'utf8', env: launchEnv });
+  const first = spawnSync(wrapper, ['task', 'second-argument'], { encoding: 'utf8', env: launchEnv });
   assert.equal(first.status, 7, `the original provider exit code must survive (${first.status}): ${first.stdout}\n${first.stderr}`);
   const firstArgs = await readFile(argsPath, 'utf8');
-  assert.equal(firstArgs, 'task\nsecond argument\n', 'noninteractive provider invocations must preserve argument order and boundaries without automatic model flags');
+  assert.equal(firstArgs, 'task\nsecond-argument\n', 'noninteractive provider invocations must preserve argument order and boundaries without automatic model flags');
 
   const slowCommand = Buffer.from('sleep 60').toString('base64');
   const timeoutStart = Date.now();

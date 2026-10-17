@@ -89,6 +89,27 @@ describe('provider executable lookup', () => {
     }
   });
 
+  it('skips legacy PATH-based wrappers and rejects explicit legacy wrapper paths', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'surplus-legacy-wrapper-'));
+    try {
+      const legacyBin = join(fixture, 'legacy-bin');
+      const providerBin = join(fixture, 'provider-bin');
+      const home = join(fixture, 'home');
+      await Promise.all([mkdir(legacyBin), mkdir(providerBin), mkdir(home)]);
+      const legacyWrapper = join(legacyBin, 'codex');
+      const realProvider = join(providerBin, 'codex');
+      await writeFile(legacyWrapper, '#!/bin/sh\nexec surplus run codex "$@"\n');
+      await chmod(legacyWrapper, 0o755);
+      await writeFile(realProvider, '#!/bin/sh\nexit 0\n');
+      await chmod(realProvider, 0o755);
+
+      expect(await findExecutable('codex', { HOME: home, PATH: [legacyBin, providerBin].join(':') }, home)).toBe(realProvider);
+      await expect(findExecutable('codex', { HOME: home, SURPLUS_CODEX_BIN: legacyWrapper }, home)).rejects.toThrow(/managed wrapper/);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('uses HOME-based managed wrapper lookup for empty and relative XDG_STATE_HOME', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'surplus-xdg-launch-'));
     const originalCwd = process.cwd();

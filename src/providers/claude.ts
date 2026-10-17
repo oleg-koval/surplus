@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { delimiter, join, resolve } from 'node:path';
 import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
 import type { UsageSnapshot } from '../core/types.js';
-import { managedWrapperContents } from '../core/managed-wrapper.js';
+import { isManagedWrapperContents } from '../core/managed-wrapper.js';
 import { surplusDataDirectory } from '../core/xdg.js';
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
@@ -43,8 +43,7 @@ export const readClaudeIdentityHash = (env = process.env): string | undefined =>
   const isManagedWrapper = (path: string): boolean => {
     try {
       const details = statSync(path);
-      const contents = managedWrapperContents('claude');
-      return details.isFile() && details.size === Buffer.byteLength(contents) && readFileSync(path, 'utf8') === contents;
+      return details.isFile() && isManagedWrapperContents('claude', readFileSync(path, 'utf8'));
     } catch { return false; }
   };
   const managedExecutable = canonicalPath(join(wrapperDir, 'claude'));
