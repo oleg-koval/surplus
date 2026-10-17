@@ -9,6 +9,7 @@ import { statuslineSegment, withSegment } from '../src/core/notice.js';
 import type { UsageSnapshot } from '../src/core/types.js';
 import { discoverCodex } from '../src/providers/codex.js';
 import type { CodexDiscovery } from '../src/providers/codex.js';
+import { managedWrapperContents } from '../src/core/managed-wrapper.js';
 
 const homes: string[] = [];
 const savedEnv = new Map<string, string | undefined>();
@@ -119,7 +120,7 @@ describe('usage history', () => {
       const providerBin = join(home, 'provider-bin');
       await Promise.all([mkdir(managedBin, { recursive: true }), mkdir(providerBin)]);
       const wrapper = join(managedBin, 'codex');
-      await writeFile(wrapper, '#!/bin/sh\nexec surplus run codex "$@"\n');
+      await writeFile(wrapper, managedWrapperContents('codex'));
       await chmod(wrapper, 0o755);
       await symlink(join(process.cwd(), 'tests/fixtures/fake-codex.mjs'), join(providerBin, 'codex'));
       setEnv('SURPLUS_CODEX_BIN', undefined);

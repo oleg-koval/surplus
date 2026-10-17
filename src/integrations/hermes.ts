@@ -11,14 +11,20 @@ const timestamp = (value: unknown): value is string => typeof value === 'string'
 
 export const isSimpleHermesLaunch = (args: readonly string[]): boolean => args.length === 0 || (args.length === 1 && args[0] === 'chat');
 
+const windowLabel = (value: unknown): string => typeof value === 'string'
+  ? value.trim().toLowerCase().replaceAll('_', ' ').replaceAll('-', ' ')
+  : '';
+
 /** Parses Hermes's documented `usage --json` schema, accepting only subscription windows. */
 export const parseHermesUsage = (value: unknown): UsageSnapshot | undefined => {
   if (!record(value) || !timestamp(value.fetched_at) || !Array.isArray(value.windows) || value.unavailable_reason) return undefined;
   const provider: Provider | undefined = value.provider === 'openai-codex' ? 'codex' : value.provider === 'anthropic' ? 'claude' : undefined;
   if (!provider) return undefined;
   const windows = value.windows.filter(record);
-  const weekly = windows.find((window) => window.label === 'Weekly');
-  const session = windows.find((window) => window.label === 'Session');
+  // Hermes presents these labels differently for Codex and Anthropic. Match
+  // the semantic period, not the provider-specific presentation text.
+  const weekly = windows.find((window) => ['weekly', 'current week'].includes(windowLabel(window.label)));
+  const session = windows.find((window) => ['session', 'current session'].includes(windowLabel(window.label)));
   if (!weekly || !percent(weekly.used_percent) || !timestamp(weekly.resets_at)) return undefined;
   if (session && (!percent(session.used_percent) || !timestamp(session.resets_at))) return undefined;
   if (!session && provider === 'claude') return undefined;

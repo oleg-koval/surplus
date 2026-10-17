@@ -4,9 +4,10 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { configPath, dataDir, defaultConfig, saveConfig } from '../src/core/files.js';
+import { configPath, dataDir, defaultConfig, saveConfig, withFileLock } from '../src/core/files.js';
 import { resolveHomeDirectory } from '../src/core/xdg.js';
 import { installClaudeStatusLine, installShell, statuslineCommand, surplusExecutable, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
+import { managedWrapperContents } from '../src/core/managed-wrapper.js';
 
 const tempHomes: string[] = [];
 const withHome = async (run: (home: string) => Promise<void>): Promise<void> => {
@@ -35,12 +36,65 @@ describe('reversible install', () => {
       await installShell();
       for (const provider of ['hermes', 'pi']) {
         const path = join(home, 'state', 'surplus', 'bin', provider);
-        expect(await readFile(path, 'utf8')).toBe(`#!/bin/sh\nexec surplus run ${provider} "$@"\n`);
+        const contents = await readFile(path, 'utf8');
+        expect(contents).toContain(` run '${provider}' "$@"\n`);
+        expect(contents).not.toContain('exec surplus run');
         expect((await stat(path)).mode & 0o100).not.toBe(0);
       }
       await uninstallShell();
       for (const provider of ['hermes', 'pi']) {
         await expect(readFile(join(home, 'state', 'surplus', 'bin', provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+  });
+
+  it('refreshes legacy and stale direct wrappers, and removes both on uninstall', async () => {
+    await withHome(async (home) => {
+      await installShell();
+      const bin = join(home, 'state', 'surplus', 'bin');
+      await writeFile(join(bin, 'codex'), '#!/bin/sh\nexec surplus run codex "$@"\n');
+      await writeFile(join(bin, 'hermes'), managedWrapperContents('hermes', '/old/node', '/old/cli.js'));
+
+      await installShell();
+
+      for (const provider of ['codex', 'hermes']) {
+        const contents = await readFile(join(bin, provider), 'utf8');
+        expect(contents).toContain(` run '${provider}' "$@"\n`);
+        expect(contents).not.toContain('exec surplus run');
+        expect(contents).not.toContain('/old/node');
+      }
+
+      await writeFile(join(bin, 'pi'), '#!/bin/sh\nexec surplus run pi "$@"\n');
+      await uninstallShell();
+      for (const provider of ['codex', 'hermes', 'pi']) {
+        await expect(readFile(join(bin, provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+    });
+  });
+
+  it('serializes concurrent installs before publishing managed wrappers', async () => {
+    await withHome(async (home) => {
+      const lockPath = join(home, 'state', 'surplus', 'bin', '.install');
+      let release!: () => void;
+      let lockAcquired = false;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const lock = withFileLock(lockPath, async () => {
+        lockAcquired = true;
+        await held;
+      });
+      while (!lockAcquired) await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const install = installShell();
+      const bin = join(home, 'state', 'surplus', 'bin');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
+        await expect(readFile(join(bin, provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+
+      release();
+      await Promise.all([lock, install]);
+      for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
+        expect(await readFile(join(bin, provider), 'utf8')).toContain(` run '${provider}' "$@"\n`);
       }
     });
   });
@@ -112,23 +166,15 @@ describe('reversible install', () => {
   it('repairs missing execute permission only on exact Surplus wrappers', async () => {
     await withHome(async (home) => {
       const codexWrapper = join(home, 'state', 'surplus', 'bin', 'codex');
-      const commandBin = join(home, 'command-bin');
-      const argsPath = join(home, 'wrapper-args');
       await installShell();
       await chmod(codexWrapper, 0o641);
 
       await installShell();
 
       expect((await stat(codexWrapper)).mode & 0o100).not.toBe(0);
-      await mkdir(commandBin);
-      const fakeSurplus = join(commandBin, 'surplus');
-      await writeFile(fakeSurplus, '#!/bin/sh\nprintf "%s\\n" "$@" > "$SURPLUS_WRAPPER_ARGS"\n');
-      await chmod(fakeSurplus, 0o755);
-      const launched = spawnSync(codexWrapper, ['--model', 'fixture'], {
-        encoding: 'utf8', env: { HOME: home, PATH: commandBin, SURPLUS_WRAPPER_ARGS: argsPath },
-      });
-      expect(launched.status).toBe(0);
-      expect(await readFile(argsPath, 'utf8')).toBe('run\ncodex\n--model\nfixture\n');
+      const contents = await readFile(codexWrapper, 'utf8');
+      expect(contents).toContain(' run \'codex\' "$@"\n');
+      expect(contents).not.toContain('exec surplus ');
 
       await writeFile(codexWrapper, '#!/bin/sh\n# user-owned\n');
       const editedMode = (await stat(codexWrapper)).mode & 0o777;

@@ -8,6 +8,7 @@ import { codexLimitSnapshot, codexWindows, selectEffectiveCodexModel } from '../
 import { codexUpgradeConfig } from '../src/core/codex-policy.js';
 import { defaultConfig } from '../src/core/files.js';
 import { decide } from '../src/core/policy.js';
+import { managedWrapperContents } from '../src/core/managed-wrapper.js';
 
 const now = new Date('2026-10-07T12:00:00.000Z');
 
@@ -104,7 +105,7 @@ describe('Claude statusline telemetry', () => {
       const staleWrapper = join(oldManagedBin, 'claude');
       const executable = join(providerBin, 'claude');
       const identity = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', email: 'Fixture@Example.test', orgId: 'org-1', subscriptionType: 'pro' };
-      await writeFile(staleWrapper, '#!/bin/sh\nexec surplus run claude "$@"\n');
+      await writeFile(staleWrapper, managedWrapperContents('claude'));
       await chmod(staleWrapper, 0o755);
       await writeFile(executable, `#!/bin/sh\nprintf '%s' '${JSON.stringify(identity)}'\n`);
       await chmod(executable, 0o755);

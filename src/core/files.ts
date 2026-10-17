@@ -35,10 +35,10 @@ export const atomicJson = async (path: string, value: unknown): Promise<void> =>
   await rename(temporary, destination);
 };
 
-export const withFileLock = async <T>(path: string, operation: () => Promise<T>): Promise<T> => {
+export const withFileLock = async <T>(path: string, operation: () => Promise<T>, waitMs = 100): Promise<T> => {
   const lockPath = `${path}.lock`;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const deadline = Date.now() + 100;
+  const deadline = Date.now() + waitMs;
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   while (!handle) {
     try { handle = await open(lockPath, 'wx', 0o600); }
