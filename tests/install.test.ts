@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { main } from '../src/cli.js';
-import { configPath, dataDir, defaultConfig, saveConfig } from '../src/core/files.js';
+import { configPath, dataDir, defaultConfig, saveConfig, withFileLock } from '../src/core/files.js';
 import { resolveHomeDirectory } from '../src/core/xdg.js';
 import { installClaudeStatusLine, installShell, statuslineCommand, surplusExecutable, uninstallClaudeStatusLine, uninstallShell } from '../src/install/shell.js';
 import { managedWrapperContents } from '../src/core/managed-wrapper.js';
@@ -74,8 +74,25 @@ describe('reversible install', () => {
 
   it('serializes concurrent installs before publishing managed wrappers', async () => {
     await withHome(async (home) => {
-      await Promise.all([installShell(), installShell(), installShell()]);
+      const lockPath = join(home, 'state', 'surplus', 'bin', '.install');
+      let release!: () => void;
+      let lockAcquired = false;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const lock = withFileLock(lockPath, async () => {
+        lockAcquired = true;
+        await held;
+      });
+      while (!lockAcquired) await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const install = installShell();
       const bin = join(home, 'state', 'surplus', 'bin');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
+        await expect(readFile(join(bin, provider), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      }
+
+      release();
+      await Promise.all([lock, install]);
       for (const provider of ['claude', 'codex', 'hermes', 'pi']) {
         expect(await readFile(join(bin, provider), 'utf8')).toContain(` run '${provider}' "$@"\n`);
       }

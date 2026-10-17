@@ -223,7 +223,7 @@ const installShellUnlocked = async (): Promise<void> => {
 
 export const installShell = async (): Promise<void> => withFileLock(join(managedBin(), '.install'), installShellUnlocked, 10_000);
 
-export const uninstallShell = async (): Promise<void> => {
+const uninstallShellUnlocked = async (): Promise<void> => {
   const candidates = shellRcCandidates();
   const failures: unknown[] = [];
   const recordFailure = (path: string, error: unknown): void => {
@@ -258,6 +258,8 @@ export const uninstallShell = async (): Promise<void> => {
     throw new AggregateError(failures, `Shell uninstall completed with errors: ${details}`);
   }
 };
+
+export const uninstallShell = async (): Promise<void> => withFileLock(join(managedBin(), '.install'), uninstallShellUnlocked, 10_000);
 
 const defaultClaudeSettingsPath = (): string => join(resolveHomeDirectory(), '.claude', 'settings.json');
 export const claudeSettingsPath = (): string => join(process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : join(resolveHomeDirectory(), '.claude'), 'settings.json');

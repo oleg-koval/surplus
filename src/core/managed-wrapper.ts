@@ -1,7 +1,8 @@
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
-const defaultCliPath = (): string => process.argv[1] ?? fileURLToPath(import.meta.url);
+const defaultCliPath = (): string => process.argv[1] ? resolve(process.argv[1]) : fileURLToPath(import.meta.url);
 const legacyWrapperContents = (provider: string): string => `#!/bin/sh\nexec surplus run ${provider} "$@"\n`;
 const quotedShellWord = "'(?:[^']|'\\\\'')*'";
 
