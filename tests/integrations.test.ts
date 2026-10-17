@@ -46,7 +46,7 @@ describe('Hermes integration', () => {
         { label: 'Current session', used_percent: 20, resets_at: new Date(Date.now() + 60 * 60_000).toISOString() },
         { label: 'Current week', used_percent: 40, resets_at: new Date(Date.now() + 24 * 60 * 60_000).toISOString() },
       ],
-    })?.provider).toBe('claude');
+    })).toMatchObject({ provider: 'claude', weeklyUsedPercent: 40, sessionUsedPercent: 20 });
     expect(parseHermesUsage(hermesDocument('openai-codex', false))?.sessionWindow).toBe('absent');
     expect(parseHermesUsage(hermesDocument('anthropic', false))).toBeUndefined();
     expect(parseHermesUsage(hermesDocument('openrouter'))).toBeUndefined();
