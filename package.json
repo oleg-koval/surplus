@@ -52,20 +52,20 @@
     "release:dry-run": "semantic-release --dry-run --no-ci"
   },
   "devDependencies": {
-    "@eslint/js": "^9.26.0",
-    "@semantic-release/changelog": "^6.0.3",
+    "@eslint/js": "^10.0.1",
+    "@semantic-release/changelog": "^7.0.0",
     "@semantic-release/commit-analyzer": "^13.0.1",
-    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/git": "^11.0.1",
     "@semantic-release/github": "^12.0.10",
     "@semantic-release/npm": "^13.2.0",
     "@semantic-release/release-notes-generator": "^14.1.1",
-    "@types/node": "^22.15.0",
-    "eslint": "^9.26.0",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
     "semantic-release": "^25.0.9",
     "semantic-release-npm-github-publish": "^1.7.7",
-    "tsup": "^8.4.0",
-    "typescript": "^5.8.3",
+    "tsup": "^9.0.0",
+    "typescript": "^7.0.2",
     "typescript-eslint": "^8.31.1",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.5"
   }
 }
