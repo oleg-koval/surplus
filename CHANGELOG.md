@@ -1,3 +1,10 @@
+## [0.7.2](https://github.com/oleg-koval/surplus/compare/v0.7.1...v0.7.2) (2026-10-20)
+
+
+### ♻️ Chores
+
+* sync shared repo config ([#25](https://github.com/oleg-koval/surplus/issues/25)) ([5b9132e](https://github.com/oleg-koval/surplus/commit/5b9132e5f3a223887a726c1378fa589762b20f33))
+
 ## [0.7.1](https://github.com/oleg-koval/surplus/compare/v0.7.0...v0.7.1) (2026-10-12)
 
 
