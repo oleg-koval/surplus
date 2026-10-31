@@ -1,3 +1,15 @@
+## [0.7.3](https://github.com/oleg-koval/surplus/compare/v0.7.2...v0.7.3) (2026-10-31)
+
+
+### ♻️ Chores
+
+* sync shared repo config ([#29](https://github.com/oleg-koval/surplus/issues/29)) ([794a2e2](https://github.com/oleg-koval/surplus/commit/794a2e257002f976b9f00d23632458544035ffbc))
+
+
+### 🛠 Builds
+
+* **deps:** bump undici ([#27](https://github.com/oleg-koval/surplus/issues/27)) ([8751eb1](https://github.com/oleg-koval/surplus/commit/8751eb1618c16d22a38cdb2bcfbcac8b1c4f1920))
+
 ## [0.7.2](https://github.com/oleg-koval/surplus/compare/v0.7.1...v0.7.2) (2026-10-20)
 
 
