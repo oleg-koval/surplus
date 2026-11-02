@@ -89,9 +89,13 @@ describe('resilient hook command', () => {
   it('prefers the recorded node over the one on PATH', async () => {
     const box = await sandbox();
     const recorded = await box.fake(join(box.root, 'fnm'), 'node');
-    await box.fake(join(box.root, 'path'), 'node');
+    const pathNode = join(box.root, 'path', 'node');
+    await mkdir(join(box.root, 'path'));
+    await writeFile(pathNode, '#!/bin/sh\necho path-node-was-used\n');
+    await chmod(pathNode, 0o755);
     const result = box.run(resilientHookCommand('codex', 'session-start', recorded, box.cli), [join(box.root, 'path')]);
     expect(result.stdout).toBe(`node:${box.cli} hook codex session-start\n`);
+    expect(result.stdout).not.toContain('path-node-was-used');
   });
 
   it('runs surplus from PATH when the recorded CLI file has moved away', async () => {
