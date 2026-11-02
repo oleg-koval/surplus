@@ -1,3 +1,10 @@
+## [0.7.4](https://github.com/oleg-koval/surplus/compare/v0.7.3...v0.7.4) (2026-11-02)
+
+
+### 🐛 Bug Fixes
+
+* **install:** keep hooks and statusline working when the recorded Node disappears ([#32](https://github.com/oleg-koval/surplus/issues/32)) ([1322156](https://github.com/oleg-koval/surplus/commit/13221565cc6d7c2656f245f0e1bb1b79a5bc224f))
+
 ## [0.7.3](https://github.com/oleg-koval/surplus/compare/v0.7.2...v0.7.3) (2026-10-31)
 
 
