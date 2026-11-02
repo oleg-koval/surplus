@@ -99,7 +99,7 @@ jobs:
       group: fleet-automerge-${{ matrix.pr-number }}
       cancel-in-progress: false
     steps:
-      - uses: oleg-koval/pr-automerge-github-action@0ce5a36e264c296c8d542adc715540fcd466ae56 # no comments; checks and review threads gated
+      - uses: oleg-koval/pr-automerge-github-action@c55af0aaa24d48c81ae9737f8d24aeb832e88efd # no comments; checks and review threads gated
         with:
           github-token: ${{ github.token }}
           bot-logins: oleg-koval-fleet[bot],oleg-koval
