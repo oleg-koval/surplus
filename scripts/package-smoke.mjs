@@ -88,7 +88,8 @@ try {
   const settingsPath = join(home, '.claude', 'settings.json');
   const settings = JSON.parse(await readFile(settingsPath, 'utf8'));
   const statuslineCommand = settings.statusLine.command;
-  const captureCommand = statuslineCommand.split(' --original=')[0];
+  // The installed command carries the chained statusline as base64 in its leading O='...' assignment.
+  const withOriginal = (encoded) => statuslineCommand.replace(/^O='[^']*'/, `O='${encoded}'`);
   const sample = JSON.stringify({ rate_limits: {
     five_hour: { used_percentage: 20, resets_at: Math.floor(Date.now() / 1000) + 4 * 60 * 60 },
     seven_day: { used_percentage: 60, resets_at: Math.floor(Date.now() / 1000) + 24 * 60 * 60 },
@@ -119,17 +120,17 @@ try {
 
   const slowCommand = Buffer.from('sleep 60').toString('base64');
   const timeoutStart = Date.now();
-  const timed = spawnSync('/bin/sh', ['-c', `${captureCommand} --original=${slowCommand}`], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash, SURPLUS_STATUSLINE_SAMPLE: sample }, input: sample, timeout: 6_000 });
+  const timed = spawnSync('/bin/sh', ['-c', withOriginal(slowCommand)], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash, SURPLUS_STATUSLINE_SAMPLE: sample }, input: sample, timeout: 6_000 });
   assert.equal(timed.status, 0, `a stalled chained statusline should time out cleanly: ${timed.stderr}`);
   assert.ok(Date.now() - timeoutStart < 5_000, 'a stalled statusline subprocess must not hold Claude startup open');
 
   const earlyExitCommand = Buffer.from('exit 0').toString('base64');
   const largeInput = JSON.stringify({ payload: 'x'.repeat(2 * 1024 * 1024) });
-  const earlyExit = spawnSync('/bin/sh', ['-c', `${captureCommand} --original=${earlyExitCommand}`], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash }, input: largeInput, timeout: 6_000 });
+  const earlyExit = spawnSync('/bin/sh', ['-c', withOriginal(earlyExitCommand)], { encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash }, input: largeInput, timeout: 6_000 });
   assert.equal(earlyExit.status, 0, `an original statusline that exits before reading input must not trigger EPIPE (${earlyExit.status}): ${earlyExit.stderr}`);
 
   const continuousOutputCommand = Buffer.from('yes surplus-statusline-output').toString('base64');
-  const continuousOutput = spawnSync('/bin/sh', ['-c', `${captureCommand} --original=${continuousOutputCommand}`], {
+  const continuousOutput = spawnSync('/bin/sh', ['-c', withOriginal(continuousOutputCommand)], {
     encoding: 'utf8', env: { ...env, SURPLUS_CLAUDE_IDENTITY_HASH: identityHash }, input: sample,
     timeout: 6_000, maxBuffer: 2 * 1024 * 1024,
   });

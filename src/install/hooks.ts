@@ -3,7 +3,8 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Features, Provider } from '../core/types.js';
 import { resolveHomeDirectory } from '../core/xdg.js';
-import { claudeSettingsPath, shellQuote, writeAtomic } from './shell.js';
+import { isResilientHookCommand, resilientHookCommand } from './launcher.js';
+import { claudeSettingsPath, writeAtomic } from './shell.js';
 
 export type HookEventName = 'session-start' | 'prompt-submit';
 const eventKeys: Readonly<Record<HookEventName, string>> = { 'session-start': 'SessionStart', 'prompt-submit': 'UserPromptSubmit' };
@@ -14,13 +15,15 @@ export const codexHooksPath = (): string =>
 const hooksFilePath = (provider: Provider): string => provider === 'claude' ? claudeSettingsPath() : codexHooksPath();
 
 export const hookCommand = (provider: Provider, event: HookEventName): string =>
-  `${shellQuote(process.execPath)} ${shellQuote(fileURLToPath(import.meta.url))} hook ${provider} ${event}`;
+  resilientHookCommand(provider, event, process.execPath, fileURLToPath(import.meta.url));
 
 /**
- * Purely recognizes the managed command shape for a provider event, accepting older quoted executable and module paths.
+ * Purely recognizes the managed command shape for a provider event, accepting the older bare
+ * `'node' 'cli' hook ...` form that hard-wired the install-time Node path and could not survive its removal.
  */
 const isOurCommand = (command: unknown, provider: Provider, event: HookEventName): boolean =>
-  typeof command === 'string' && new RegExp(`^'(?:[^']|'\\\\'')+' '(?:[^']|'\\\\'')+' hook ${provider} ${event}$`).test(command);
+  typeof command === 'string' && (isResilientHookCommand(command, provider, event)
+    || new RegExp(`^'(?:[^']|'\\\\'')+' '(?:[^']|'\\\\'')+' hook ${provider} ${event}$`).test(command));
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
