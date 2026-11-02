@@ -472,7 +472,7 @@ describe('reversible install', () => {
       expect(installed.theme).toBe('dark');
       expect(installed.statusLine.padding).toBe(8);
       expect(installed.statusLine.command).toContain('--original=');
-      expect(installed.statusLine.command.match(/capture claude/g)).toHaveLength(1);
+      expect(installed.statusLine.command.match(/capture claude/g)).toHaveLength(2);
       await uninstallClaudeStatusLine();
       const restored = JSON.parse(await readFile(settings, 'utf8')) as { statusLine: unknown };
       expect(restored.statusLine).toEqual(original);

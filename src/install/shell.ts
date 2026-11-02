@@ -7,11 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { dataDir, withFileLock } from '../core/files.js';
 import { isManagedWrapperContents, managedWrapperContents } from '../core/managed-wrapper.js';
 import { resolveHomeDirectory } from '../core/xdg.js';
+import { resilientCaptureCommand, resilientCaptureOriginal, shellQuote } from './launcher.js';
 
 const begin = '# >>> surplus managed block >>>';
 const end = '# <<< surplus managed block <<<';
 const managedBin = (): string => join(dataDir(), 'bin');
-export const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+export { shellQuote };
 const managedMarkers = (): string => `${begin}\nexport PATH=${shellQuote(managedBin())}:"$PATH"\n${end}\n`;
 const wrapper = managedWrapperContents;
 
@@ -263,28 +264,45 @@ export const uninstallShell = async (): Promise<void> => withFileLock(join(manag
 
 const defaultClaudeSettingsPath = (): string => join(resolveHomeDirectory(), '.claude', 'settings.json');
 export const claudeSettingsPath = (): string => join(process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : join(resolveHomeDirectory(), '.claude'), 'settings.json');
-export const statuslineCommand = (originalCommand?: string): string => {
+export const statuslineCommand = (originalCommand?: string): string =>
+  resilientCaptureCommand(process.execPath, fileURLToPath(import.meta.url), originalCommand ? Buffer.from(originalCommand).toString('base64') : '');
+
+/** The pre-resilience command shape, which hard-wired this install's Node path; still recognized so installs can migrate it. */
+const legacyStatuslineCommand = (originalCommand?: string): string => {
   const cli = `${shellQuote(process.execPath)} ${shellQuote(fileURLToPath(import.meta.url))} capture claude`;
   return originalCommand ? `${cli} --original=${Buffer.from(originalCommand).toString('base64')}` : cli;
 };
 
-const recoverOriginalStatuslineCommand = (command: string): { readonly recognized: boolean; readonly originalCommand?: string } => {
-  const bareCommand = statuslineCommand();
-  if (command === bareCommand) return { recognized: true };
-  const prefix = `${bareCommand} --original=`;
-  if (!command.startsWith(prefix)) return { recognized: false };
-  const encoded = command.slice(prefix.length);
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return { recognized: false };
+const decodeOriginal = (encoded: string): string | undefined => {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return undefined;
   const bytes = Buffer.from(encoded, 'base64');
   const decoded = bytes.toString('utf8');
-  if (!decoded || bytes.toString('base64') !== encoded || Buffer.from(decoded, 'utf8').toString('base64') !== encoded) {
-    return { recognized: false };
+  if (!decoded || bytes.toString('base64') !== encoded || Buffer.from(decoded, 'utf8').toString('base64') !== encoded) return undefined;
+  return decoded;
+};
+
+/**
+ * Recognizes a capture command produced by this installation (current or legacy shape) and recovers the user's original
+ * statusline from it. A command carrying another installation's node or CLI paths is deliberately not recognized.
+ */
+const recoverOriginalStatuslineCommand = (command: string): { readonly recognized: boolean; readonly originalCommand?: string } => {
+  const encoded = resilientCaptureOriginal(command);
+  if (encoded !== undefined) {
+    if (encoded === '') return { recognized: command === statuslineCommand() };
+    const decoded = decodeOriginal(encoded);
+    return decoded !== undefined && command === statuslineCommand(decoded) ? { recognized: true, originalCommand: decoded } : { recognized: false };
   }
-  return { recognized: true, originalCommand: decoded };
+  const bare = legacyStatuslineCommand();
+  if (command === bare) return { recognized: true };
+  const prefix = `${bare} --original=`;
+  if (!command.startsWith(prefix)) return { recognized: false };
+  const decoded = decodeOriginal(command.slice(prefix.length));
+  return decoded === undefined ? { recognized: false } : { recognized: true, originalCommand: decoded };
 };
 
 const isGeneratedCaptureCommand = (command: string): boolean =>
-  /^'(?:[^']|'\\'')+' '(?:[^']|'\\'')+' capture claude(?: --original=[A-Za-z0-9+/]+={0,2})?$/.test(command);
+  resilientCaptureOriginal(command) !== undefined
+  || /^'(?:[^']|'\\'')+' '(?:[^']|'\\'')+' capture claude(?: --original=[A-Za-z0-9+/]+={0,2})?$/.test(command);
 
 export const installClaudeStatusLine = async (): Promise<boolean> => {
   const settingsPath = claudeSettingsPath();
@@ -350,7 +368,9 @@ export const installClaudeStatusLine = async (): Promise<boolean> => {
   }
   const backup = alreadyOwned && previous
     ? { present: previous.present, value: previous.value, managedCommand, settingsPath }
-    : { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand, settingsPath };
+    : orphanedCommand?.recognized
+      ? { present: originalCommand !== undefined, ...(originalCommand === undefined ? {} : { value: { ...currentObject, type: 'command', command: originalCommand } }), managedCommand, settingsPath }
+      : { present: Object.hasOwn(settings, 'statusLine'), value: settings.statusLine, managedCommand, settingsPath };
   const newBackupContents = `${JSON.stringify(backup, null, 2)}\n`;
   await writeAtomic(path, newBackupContents, 0o600);
   settings.statusLine = { ...(currentObject ?? {}), type: 'command', command: managedCommand };
